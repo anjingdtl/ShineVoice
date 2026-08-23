@@ -12,22 +12,18 @@ import com.shinevoice.domain.tts.TtsProvider
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.domain.tts.TtsVoice
+import kotlinx.coroutines.CancellationException
 
-/** Phase 0 boundary; Native implementation is added in the Phase 1 commit. */
 class SherpaZipVoiceProvider(
     private val modelResolver: ModelDirectoryResolver,
+    private val runtimeManager: SherpaRuntimeManager,
     private val wavStorage: WavStorage,
     private val logger: AppLogger,
 ) : TtsProvider {
     override val id: String = PROVIDER_ID
     override val displayName: String = "本地 ZipVoice"
 
-    override suspend fun initialize(): ProviderResult = ProviderResult.failure(
-        TtsError(
-            TtsErrorCode.ProviderNotInitialized,
-            "ZipVoice Native Runtime 尚未接入，请准备 Phase 1 模型。",
-        ),
-    )
+    override suspend fun initialize(): ProviderResult = runtimeManager.initialize()
 
     override suspend fun getCapabilities(): TtsCapabilities = TtsCapabilities(
         supportsVoiceClone = true,
@@ -47,40 +43,109 @@ class SherpaZipVoiceProvider(
     override suspend fun validateConfig(): ProviderResult {
         val status = modelResolver.inspect()
         return if (status.ready) {
-            ProviderResult.failure(
-                TtsError(
-                    TtsErrorCode.ProviderNotInitialized,
-                    "Phase 0 仅建立 Provider 边界，尚未加载 Native Runtime。",
-                ),
-            )
+            ProviderResult.ok(status.summary)
         } else {
             ProviderResult.failure(
                 TtsError(
                     TtsErrorCode.ModelNotInstalled,
                     status.summary,
-                    "root=${status.rootPath}",
+                    "root=${status.rootPath}; reference=${status.referencePath}",
                 ),
             )
         }
     }
 
-    override suspend fun synthesize(request: TtsRequest): TtsResult = TtsResult.failure(
-        taskId = request.taskId,
-        providerId = id,
-        elapsedMs = 0L,
-        error = TtsError(
-            TtsErrorCode.ProviderNotInitialized,
-            "Phase 0 尚未执行本地推理；Phase 1 将接入官方 sherpa-onnx Runtime。",
-        ),
-    )
+    override suspend fun synthesize(request: TtsRequest): TtsResult {
+        val startedAt = System.nanoTime()
+        if (request.outputFormat != AudioFormat.WAV_PCM_16) {
+            return failure(request, elapsed(startedAt), TtsErrorCode.UnsupportedFormat, "Phase 1 只输出 WAV PCM 16-bit。")
+        }
+        if (request.text.isBlank()) {
+            return failure(request, elapsed(startedAt), TtsErrorCode.EmptyText, "请输入需要生成的中文文本。")
+        }
+        val referenceText = request.extra[EXTRA_REFERENCE_TEXT].orEmpty()
+        if (referenceText.isBlank()) {
+            return failure(request, elapsed(startedAt), TtsErrorCode.InvalidReferenceText, "referenceText 不能为空。")
+        }
+        val validation = validateConfig()
+        if (!validation.success) return failure(
+            request,
+            elapsed(startedAt),
+            validation.error?.code ?: TtsErrorCode.ModelNotInstalled,
+            validation.message,
+            validation.error?.causeMessage,
+        )
+        val initialization = runtimeManager.initialize()
+        if (!initialization.success) return failure(
+            request,
+            elapsed(startedAt),
+            initialization.error?.code ?: TtsErrorCode.NativeRuntimeError,
+            initialization.message,
+            initialization.error?.causeMessage,
+        )
+
+        return try {
+            val audio = runtimeManager.generate(request)
+            if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
+                failure(request, elapsed(startedAt), TtsErrorCode.NativeRuntimeError, "Native Runtime 未返回有效音频。")
+            } else {
+                val output = wavStorage.generatedFile(request.taskId)
+                if (!audio.save(output.absolutePath)) {
+                    failure(request, elapsed(startedAt), TtsErrorCode.StorageError, "生成 WAV 保存失败。")
+                } else {
+                    val audioDurationMs = audio.samples.size.toLong() * 1000L / audio.sampleRate
+                    val elapsedMs = elapsed(startedAt)
+                    logger.i(
+                        "ZipVoice generated task=${request.taskId} textLength=${request.text.length} " +
+                            "elapsedMs=$elapsedMs audioDurationMs=$audioDurationMs sampleRate=${audio.sampleRate}",
+                    )
+                    TtsResult(
+                        taskId = request.taskId,
+                        providerId = id,
+                        success = true,
+                        audioFile = output.absolutePath,
+                        durationMs = audioDurationMs,
+                        sampleRate = audio.sampleRate,
+                        model = ModelDirectoryResolver.ZIPVOICE_MODEL_ID,
+                        voiceId = request.voiceId ?: DEFAULT_VOICE_ID,
+                        elapsedMs = elapsedMs,
+                    )
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (throwable: Throwable) {
+            logger.e("ZipVoice synthesis failed", throwable)
+            val errorCode = when (throwable) {
+                is IllegalArgumentException -> TtsErrorCode.InvalidReferenceAudio
+                else -> TtsErrorCode.NativeRuntimeError
+            }
+            failure(request, elapsed(startedAt), errorCode, "本地 ZipVoice 生成失败。", throwable.message)
+        }
+    }
 
     override suspend fun cancel(taskId: String) {
-        logger.i("Phase 0 cancel requested task=$taskId")
+        // The official synchronous OfflineTts API has no cancellation handle.
+        // TtsManager serializes tasks; future async Native support can be added here.
+        logger.i("ZipVoice cancel requested task=$taskId; synchronous call will finish")
     }
 
-    override suspend fun release() {
-        logger.i("Phase 0 ZipVoice provider released")
-    }
+    override suspend fun release() = runtimeManager.release()
+
+    private fun failure(
+        request: TtsRequest,
+        elapsedMs: Long,
+        code: TtsErrorCode,
+        message: String,
+        cause: String? = null,
+    ): TtsResult = TtsResult.failure(
+        taskId = request.taskId,
+        providerId = id,
+        elapsedMs = elapsedMs,
+        error = TtsError(code, message, cause),
+    )
+
+    private fun elapsed(startedAt: Long): Long = (System.nanoTime() - startedAt) / 1_000_000L
 
     companion object {
         const val PROVIDER_ID = "zipvoice_local"
@@ -90,4 +155,3 @@ class SherpaZipVoiceProvider(
         const val EXTRA_NUM_STEPS = "numSteps"
     }
 }
-

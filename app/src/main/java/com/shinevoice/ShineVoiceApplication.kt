@@ -4,12 +4,14 @@ import android.app.Application
 import androidx.room.Room
 import com.shinevoice.core.log.AppLogger
 import com.shinevoice.core.storage.ModelDirectoryResolver
+import com.shinevoice.core.storage.ReferenceAudioLoader
 import com.shinevoice.core.storage.WavStorage
 import com.shinevoice.data.db.ShineVoiceDatabase
 import com.shinevoice.data.repository.RoomGenerationHistoryRepository
 import com.shinevoice.data.settings.SettingsStore
 import com.shinevoice.domain.tts.ProviderRegistry
 import com.shinevoice.domain.tts.TtsManager
+import com.shinevoice.provider.sherpa.SherpaRuntimeManager
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 
 class ShineVoiceApplication : Application() {
@@ -24,8 +26,11 @@ class ShineVoiceApplication : Application() {
     }
     val historyRepository by lazy { RoomGenerationHistoryRepository(database.generationHistoryDao()) }
     val providerRegistry by lazy { ProviderRegistry(logger) }
+    val sherpaRuntime by lazy {
+        SherpaRuntimeManager(modelResolver, ReferenceAudioLoader(), logger)
+    }
     val ttsManager by lazy {
-        val zipVoice = SherpaZipVoiceProvider(modelResolver, wavStorage, logger)
+        val zipVoice = SherpaZipVoiceProvider(modelResolver, sherpaRuntime, wavStorage, logger)
         providerRegistry.register(zipVoice)
         TtsManager(providerRegistry, historyRepository, logger)
     }
