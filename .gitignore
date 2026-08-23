@@ -1,0 +1,28 @@
+# Android / Gradle
+.gradle/
+**/build/
+.idea/
+*.iml
+local.properties
+
+# Local sherpa-onnx binary and runtime assets. Download with scripts/.
+third_party/*.aar
+third_party/*.part*
+runtime/
+
+# Test and delivery artifacts
+artifacts/
+*.apk
+*.aab
+*.wav
+*.onnx
+*.tar.bz2
+*.zip
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+
+# Native build output
+.externalNativeBuild/
+.cxx/
