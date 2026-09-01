@@ -71,12 +71,26 @@ scripts/fetch-sherpa-onnx.sh   # 拉取官方 AAR 并校验 SHA-256
 
 ## 当前边界
 
-ASR 自动识别参考文本、云端音色删除接口路由、模型下载器留到后续版本；云端与系统语音链路依赖真实设备/账号，验收见各 Phase PDCA 的“待真机验收”清单。API Key、模型、WAV、AAR、APK 和构建目录均被 Git 忽略。
+ASR 自动识别参考文本、云端音色删除接口路由、模型下载器留到后续版本。云端（MiniMax）与系统语音链路已完成模拟器真实账号联调（见 [Phase 2~6 验收证据](docs/testing/phase-2-6-acceptance-evidence.md) 与 [Phase 7 PDCA](docs/pdca/phase-7-pdca.md)）；arm64 真机复测待做。API Key、模型、WAV、AAR、APK 和构建目录均被 Git 忽略。
+
+真机链路回归可使用 instrumented 测试：
+
+```bash
+./gradlew :app:assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+# 云端链路需要 BYOK 密钥（仅命令行传参，不落盘）：
+adb shell am instrument -w -e class com.shinevoice.E2eRealChainTest \
+  -e minimaxApiKey <你的Key> \
+  -e cloneRef /sdcard/Android/data/com.shinevoice.debug/files/voices/<id>/reference.wav \
+  com.shinevoice.debug.test/androidx.test.runner.AndroidJUnitRunner
+```
 
 ## 文档
 
 - [架构说明](docs/architecture/ARCHITECTURE.md)
 - [模型部署](docs/model-deployment.md)
 - [Phase 0/1 测试计划](docs/testing/phase-0-1-test-plan.md)
+- [Phase 2~6 本地综合验收证据](docs/testing/phase-2-6-acceptance-evidence.md)
 - [开发方案基线](docs/ShineVoice_V0.1_原型版本开发方案.md)
-- [PDCA 记录](docs/pdca/)（phase-1-1 / 2 / 3 / 4 / 5 / 6）
+- [PDCA 记录](docs/pdca/)（phase-1-1 / 2 / 3 / 4 / 5 / 6 / 7）
