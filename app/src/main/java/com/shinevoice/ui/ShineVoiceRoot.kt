@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,6 +67,7 @@ fun ShineVoiceRoot(
     val context = LocalContext.current
     val application = context.applicationContext as ShineVoiceApplication
     var selectedPage by remember { mutableIntStateOf(AppPage.CREATE.ordinal) }
+    var showVoicePicker by remember { mutableStateOf(false) }
     val saveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("audio/wav"),
     ) { destination ->
@@ -106,7 +108,9 @@ fun ShineVoiceRoot(
                     state = state,
                     padding = padding,
                     onTargetTextChanged = viewModel::onTargetTextChanged,
-                    onReferenceTextChanged = viewModel::onReferenceTextChanged,
+                    onSpeedChanged = viewModel::onSpeedChanged,
+                    onReferenceTextChanged = viewModel::onCurrentReferenceTextChanged,
+                    onCurrentVoiceClick = { showVoicePicker = true },
                     onGenerate = viewModel::generate,
                     onPlay = {
                         val source = state.lastResult?.audioFile?.let(::File)
@@ -116,7 +120,13 @@ fun ShineVoiceRoot(
                     onSave = { saveLauncher.launch("shinevoice-${System.currentTimeMillis()}.wav") },
                 )
 
-                AppPage.VOICES -> VoicesScreen(state, padding)
+                AppPage.VOICES -> VoicesScreen(
+                    state = state,
+                    padding = padding,
+                    application = application,
+                    playbackController = playbackController,
+                    viewModel = viewModel,
+                )
                 AppPage.HISTORY -> HistoryScreen(state.history, padding)
                 AppPage.SETTINGS -> SettingsScreen(
                     state = state,
@@ -127,14 +137,26 @@ fun ShineVoiceRoot(
             }
         }
     }
+
+    if (showVoicePicker) {
+        VoicePickerSheet(
+            voices = state.voices,
+            currentId = state.currentVoice?.id,
+            onPick = viewModel::setCurrentVoice,
+            onDismiss = { showVoicePicker = false },
+        )
+    }
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun CreateScreen(
     state: MainUiState,
     padding: PaddingValues,
     onTargetTextChanged: (String) -> Unit,
+    onSpeedChanged: (Float) -> Unit,
     onReferenceTextChanged: (String) -> Unit,
+    onCurrentVoiceClick: () -> Unit,
     onGenerate: () -> Unit,
     onPlay: () -> Unit,
     onSave: () -> Unit,
@@ -146,29 +168,48 @@ private fun CreateScreen(
     ) {
         item {
             Text("本地优先的中文声音克隆", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "当前 Provider：本地 ZipVoice · CPU · 断网可用",
-                style = MaterialTheme.typography.bodyMedium,
-            )
         }
-        item { ModelStatusCard(state) }
-        item { VoiceProfileCard(state) }
+        item {
+            Card(onClick = onCurrentVoiceClick, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("当前音色", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        state.currentVoice?.displayName ?: "默认参考音色",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text("生成方式：本地生成 · 点击切换音色", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
         item {
             OutlinedTextField(
                 value = state.targetText,
                 onValueChange = onTargetTextChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("中文 targetText") },
+                label = { Text("输入需要生成的中文文本") },
                 minLines = 3,
                 enabled = !state.isGenerating && !state.stabilityRunning,
             )
         }
         item {
+            Text(
+                "语速：${"%.2f".format(Locale.US, state.speed)}x",
+                style = MaterialTheme.typography.labelMedium,
+            )
+            androidx.compose.material3.Slider(
+                value = state.speed,
+                onValueChange = onSpeedChanged,
+                valueRange = 0.5f..2.0f,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isGenerating && !state.stabilityRunning,
+            )
+        }
+        item {
             OutlinedTextField(
-                value = state.referenceText,
+                value = state.currentVoice?.referenceText ?: "",
                 onValueChange = onReferenceTextChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("referenceText（需匹配 reference.wav）") },
+                label = { Text("参考文本（当前音色，需与参考音频一致）") },
                 minLines = 2,
                 enabled = !state.isGenerating && !state.stabilityRunning,
             )
@@ -201,32 +242,6 @@ private fun CreateScreen(
 }
 
 @Composable
-private fun ModelStatusCard(state: MainUiState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("ZipVoice-Distill INT8", fontWeight = FontWeight.Bold)
-            Text(state.modelStatus?.summary ?: "正在检查模型…")
-            state.modelStatus?.rootPath?.let { path ->
-                Text("模型目录：$path", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
-@Composable
-private fun VoiceProfileCard(state: MainUiState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("当前音色：默认参考音色", fontWeight = FontWeight.Bold)
-            Text(state.referenceStatus?.summary ?: "正在检查参考音频…")
-            state.referenceStatus?.referencePath?.let { path ->
-                Text("参考音频：$path", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
-@Composable
 private fun GenerationResultCard(
     result: com.shinevoice.domain.tts.TtsResult,
     onPlay: () -> Unit,
@@ -235,32 +250,14 @@ private fun GenerationResultCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (result.success) "生成成功" else "生成失败", fontWeight = FontWeight.Bold)
-            Text("Provider：${result.providerId}")
-            Text("耗时：${result.elapsedMs} ms · 音频：${result.durationMs ?: "-"} ms · RTF：${result.rtf?.let { "%.3f".format(Locale.US, it) } ?: "-"}")
+            Text("生成方式：本地生成")
+            Text("耗时：${result.elapsedMs} ms · 音频长度：${if (result.durationMs != null) "${result.durationMs} ms" else "-"}")
             result.error?.let { Text("错误：${it.userMessage}") }
             if (result.success) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onPlay) { Text("播放") }
-                    Button(onClick = onSave) { Text("保存 WAV") }
+                    Button(onClick = onSave) { Text("保存") }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VoicesScreen(state: MainUiState, padding: PaddingValues) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("我的音色", style = MaterialTheme.typography.headlineSmall)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("默认参考音色", fontWeight = FontWeight.Bold)
-                Text("本地 ZipVoice")
-                Text("Phase 1 固定参考文件：${state.referenceStatus?.referencePath ?: "尚未检测"}")
-                Text("完整 VoiceProfile 管理将在后续 Phase 实现。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

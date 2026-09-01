@@ -9,9 +9,11 @@ import com.shinevoice.core.storage.ModelDirectoryResolver
 import com.shinevoice.core.storage.ReferenceAudioStatus
 import com.shinevoice.core.storage.ZipVoiceModelStatus
 import com.shinevoice.data.db.GenerationHistoryEntity
+import com.shinevoice.data.db.VoiceProfileEntity
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +22,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 data class StabilitySummary(
     val attempts: Int,
@@ -47,9 +48,11 @@ data class StabilitySummary(
 
 data class MainUiState(
     val targetText: String = "世恒哥，这是 ShineVoice 的本地中文声音克隆测试。",
-    val referenceText: String = ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
+    val speed: Float = 1.0f,
     val modelStatus: ZipVoiceModelStatus? = null,
     val referenceStatus: ReferenceAudioStatus? = null,
+    val currentVoice: VoiceProfileEntity? = null,
+    val voices: List<VoiceProfileEntity> = emptyList(),
     val providerInitialized: Boolean = false,
     val isGenerating: Boolean = false,
     val stabilityRunning: Boolean = false,
@@ -63,20 +66,30 @@ data class MainUiState(
 class MainViewModel(
     private val application: ShineVoiceApplication,
 ) : AndroidViewModel(application) {
-    private val _uiState = MutableStateFlow(
-        MainUiState(
-            modelStatus = application.modelResolver.inspect(),
-            referenceStatus = application.modelResolver.referenceAudioStatus(
-                ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
-            ),
-        ),
-    )
+    private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
         viewModelScope.launch {
             application.historyRepository.observeRecent().collectLatest { history ->
                 _uiState.update { it.copy(history = history) }
+            }
+        }
+        viewModelScope.launch {
+            application.voiceProfileManager.observeProfiles().collectLatest { voices ->
+                _uiState.update { it.copy(voices = voices) }
+            }
+        }
+        viewModelScope.launch {
+            application.voiceProfileManager.observeCurrent().collectLatest { voice ->
+                _uiState.update {
+                    it.copy(
+                        currentVoice = voice,
+                        referenceStatus = application.modelResolver.referenceAudioStatus(
+                            voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
+                        ),
+                    )
+                }
             }
         }
         refreshModelAndInitialize()
@@ -86,23 +99,86 @@ class MainViewModel(
         _uiState.update { it.copy(targetText = value) }
     }
 
+    fun onSpeedChanged(value: Float) {
+        _uiState.update { it.copy(speed = value.coerceIn(0.5f, 2.0f)) }
+    }
+
+    /** Edits the current voice's referenceText (bound to the create page). */
+    fun onCurrentReferenceTextChanged(value: String) {
+        val current = _uiState.value.currentVoice ?: return
+        viewModelScope.launch {
+            application.voiceProfileManager.updateReference(current.id, referenceText = value)
+        }
+    }
+
     fun refreshModelAndInitialize() {
         viewModelScope.launch {
             val status = withContext(Dispatchers.IO) { application.modelResolver.inspect(forceIntegrityCheck = true) }
-            val reference = application.modelResolver.referenceAudioStatus(_uiState.value.referenceText)
-            _uiState.update {
-                it.copy(modelStatus = status, referenceStatus = reference, message = status.summary)
-            }
+            _uiState.update { it.copy(modelStatus = status, message = status.summary) }
             if (status.ready) initializeProvider(showMessage = false)
         }
     }
 
-    fun onReferenceTextChanged(value: String) {
-        _uiState.update {
-            it.copy(
-                referenceText = value,
-                referenceStatus = application.modelResolver.referenceAudioStatus(value),
+    fun createVoice(displayName: String, onCreated: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val id = application.voiceProfileManager.create(
+                displayName = displayName,
+                referenceText = null,
+                referenceAudioPath = null,
+            ).id
+            application.voiceProfileManager.setCurrent(id)
+            onCreated(id)
+            _uiState.update { it.copy(message = "音色「$displayName」已创建，请录音或导入参考音频。") }
+        }
+    }
+
+    /** Records/imports the normalized reference WAV into the profile. */
+    fun attachVoiceAudio(
+        profileId: String,
+        referenceAudioPath: String,
+        referenceText: String?,
+    ) {
+        viewModelScope.launch {
+            application.voiceProfileManager.updateReference(
+                id = profileId,
+                referenceAudioPath = referenceAudioPath,
+                referenceText = referenceText?.takeIf { it.isNotBlank() },
             )
+            application.voiceProfileManager.touch(profileId)
+            _uiState.update { it.copy(message = "参考音频已保存。") }
+        }
+    }
+
+    fun renameVoice(profileId: String, displayName: String) {
+        viewModelScope.launch {
+            application.voiceProfileManager.rename(profileId, displayName)
+        }
+    }
+
+    /** Edits a profile's referenceText from the voice library screen. */
+    fun updateVoiceReferenceText(profileId: String, referenceText: String) {
+        viewModelScope.launch {
+            application.voiceProfileManager.updateReference(profileId, referenceText = referenceText)
+        }
+    }
+
+    fun setCurrentVoice(profileId: String) {
+        viewModelScope.launch {
+            application.voiceProfileManager.setCurrent(profileId)
+        }
+    }
+
+    fun deleteVoice(profileId: String) {
+        viewModelScope.launch {
+            val wasCurrent = _uiState.value.currentVoice?.id == profileId
+            application.voiceProfileManager.delete(profileId)
+            if (wasCurrent) {
+                val defaultId = application.voiceProfileManager.getById(
+                    com.shinevoice.domain.voice.VoiceProfileManager.DEFAULT_PROFILE_ID,
+                )
+                if (defaultId != null) application.voiceProfileManager.setCurrent(defaultId.id)
+            }
+            _uiState.update { it.copy(message = "音色已删除。") }
         }
     }
 
@@ -113,11 +189,10 @@ class MainViewModel(
             _uiState.update { it.copy(message = "请输入需要生成的中文文本。") }
             return
         }
-        // VoiceProfile-level validation: reference audio + referenceText are
-        // checked independently of the model status.
+        val voice = snapshot.currentVoice
         val referenceCheck = sherpaProvider()?.validateReference(
-            application.modelResolver.referenceAudio.absolutePath,
-            snapshot.referenceText.trim(),
+            voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
+            (voice?.referenceText ?: "").trim(),
         )
         if (referenceCheck != null && !referenceCheck.success) {
             _uiState.update { it.copy(message = referenceCheck.message) }
@@ -129,6 +204,7 @@ class MainViewModel(
                 ensureInitialized()
                 application.ttsManager.synthesize(newRequest(snapshot))
             }
+            voice?.let { application.voiceProfileManager.touch(it.id) }
             _uiState.update {
                 it.copy(
                     isGenerating = false,
@@ -163,9 +239,10 @@ class MainViewModel(
                 }
                 return@launch
             }
+            val voice = _uiState.value.currentVoice
             val referenceCheck = sherpaProvider()?.validateReference(
-                application.modelResolver.referenceAudio.absolutePath,
-                _uiState.value.referenceText.trim(),
+                voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
+                (voice?.referenceText ?: "").trim(),
             )
             if (referenceCheck != null && !referenceCheck.success) {
                 _uiState.update {
@@ -242,19 +319,24 @@ class MainViewModel(
         }
     }
 
-    private fun newRequest(state: MainUiState): TtsRequest = TtsRequest(
-        taskId = UUID.randomUUID().toString(),
-        text = state.targetText.trim(),
-        providerId = SherpaZipVoiceProvider.PROVIDER_ID,
-        voiceProfileId = DEFAULT_VOICE_PROFILE_ID,
-        voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
-        speed = 1.0f,
-        extra = mapOf(
-            SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to application.modelResolver.referenceAudio.absolutePath,
-            SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to state.referenceText.trim(),
-            SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
-        ),
-    )
+    private fun newRequest(state: MainUiState): TtsRequest {
+        val voice = state.currentVoice
+        return TtsRequest(
+            taskId = UUID.randomUUID().toString(),
+            text = state.targetText.trim(),
+            providerId = SherpaZipVoiceProvider.PROVIDER_ID,
+            voiceProfileId = voice?.id ?: DEFAULT_VOICE_PROFILE_ID,
+            voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
+            speed = state.speed,
+            extra = mapOf(
+                SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to
+                    (voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath),
+                SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to
+                    (voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT).trim(),
+                SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
+            ),
+        )
+    }
 
     private fun sherpaProvider(): SherpaZipVoiceProvider? =
         application.providerRegistry.get(SherpaZipVoiceProvider.PROVIDER_ID) as? SherpaZipVoiceProvider

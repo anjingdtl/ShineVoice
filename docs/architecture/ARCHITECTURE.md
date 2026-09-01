@@ -42,3 +42,9 @@ UI 不创建 Provider，不直接访问 JNI；Provider 以统一 `TtsRequest/Tts
 
 `ModelDirectoryResolver.inspect()` 产生 `ZipVoiceModelStatus`，只检查模型文件与完整性校验和；默认 `reference.wav` 与 `referenceText` 属于音色（VoiceProfile）输入，由 `ModelDirectoryResolver.referenceAudioStatus(referenceText)` 单独校验为 `ReferenceAudioStatus`。两种状态独立显示、独立门控：模型缺失不会误报“参考音频问题”，反之亦然。`SherpaZipVoiceProvider.validateReference()` 在生成本对指定音色的参考音频与参考文本做前置校验。
 
+## 音色库（Phase 2）
+
+`VoiceProfileEntity` 是用户视角的“音色”，可绑定 ZipVoice（`referenceAudioPath`/`referenceText`）、MiniMax（`minimaxVoiceId`）与 Android System TTS（`androidTtsEngine`/`androidTtsVoice`），并带 `isCurrent`/`isDefault`/`lastUsedAt` 便于最近使用与当前音色管理。`VoiceProfileManager` 是音色边界：负责 CRUD、设为当前、最近使用与删除时文件/DB 一致性（音色目录 `voices/{id}/` 随行删除；默认音色不可删）。
+
+音频预处理统一走 `core/audio`：WAV 由 `MonoWavReader` 解析，MP3/M4A/AAC 由 `AudioCodecDecoder`（MediaExtractor + MediaCodec）解码，统一重采样为 24 kHz/16-bit/mono 的 `reference.wav`；录音由 `VoiceRecorder`（AudioRecord）产出可直接生成的标准参考音频。创作页的“当前音色”通过底部弹层快速切换，生成与稳定性测试都按当前音色的参考音频与参考文本执行。
+
