@@ -392,10 +392,20 @@ private fun SettingsScreen(
                     }
                     Text("云端高清", fontWeight = FontWeight.Medium)
                     Text("状态：${state.minimaxStatus}")
+                    Text("服务区域", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.shinevoice.data.settings.MiniMaxRegion.entries.forEach { region ->
+                            androidx.compose.material3.FilterChip(
+                                selected = state.minimaxRegion == region,
+                                onClick = { viewModel.onMinimaxRegionChanged(region) },
+                                label = { Text(region.displayName) },
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = state.minimaxGroupId,
                         onValueChange = viewModel::onMinimaxGroupIdChanged,
-                        label = { Text("Group ID") },
+                        label = { Text("Group ID（选填，仅旧版账号需要）") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -420,6 +430,7 @@ private fun SettingsScreen(
                                 ).show()
                             }
                         }) { Text("保存并测试连接") }
+                        OutlinedButton(onClick = viewModel::testMinimaxConnection) { Text("测试连接") }
                         OutlinedButton(onClick = viewModel::clearMinimaxConfig) { Text("清除配置") }
                     }
                     if (state.minimaxClonedVoices.isNotEmpty()) {

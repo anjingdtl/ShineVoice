@@ -91,6 +91,8 @@ data class MainUiState(
     val nowPlayingTitle: String? = null,
     val minimaxGroupId: String = "",
     val minimaxApiKey: String = "",
+    val minimaxRegion: com.shinevoice.data.settings.MiniMaxRegion =
+        com.shinevoice.data.settings.MiniMaxRegion.CN,
     val minimaxStatus: String = "未配置",
     val minimaxClonedVoices: List<com.shinevoice.domain.tts.TtsVoice> = emptyList(),
     val cloudCloning: Boolean = false,
@@ -525,24 +527,31 @@ class MainViewModel(
         viewModelScope.launch {
             val groupId = application.minimaxConfig.groupId.first()
             val apiKey = application.minimaxConfig.apiKey()
+            val region = application.minimaxConfig.region.first()
             _uiState.update {
                 it.copy(
                     minimaxGroupId = groupId ?: "",
                     minimaxApiKey = apiKey ?: "",
+                    minimaxRegion = region,
                     minimaxStatus = if (apiKey.isNullOrBlank()) "未配置" else "已配置",
                 )
             }
         }
     }
 
+    fun onMinimaxRegionChanged(region: com.shinevoice.data.settings.MiniMaxRegion) {
+        _uiState.update { it.copy(minimaxRegion = region) }
+        viewModelScope.launch { application.minimaxConfig.saveRegion(region) }
+    }
+
     fun saveMinimaxConfig(onDone: (Boolean, String) -> Unit = { _, _ -> }) {
         val snapshot = _uiState.value
-        if (snapshot.minimaxGroupId.isBlank() || snapshot.minimaxApiKey.isBlank()) {
-            onDone(false, "请填写 Group ID 与 API Key。")
+        if (snapshot.minimaxApiKey.isBlank()) {
+            onDone(false, "请填写 API Key。")
             return
         }
         viewModelScope.launch {
-            application.minimaxConfig.save(snapshot.minimaxGroupId, snapshot.minimaxApiKey)
+            application.minimaxConfig.save(snapshot.minimaxGroupId, snapshot.minimaxApiKey, snapshot.minimaxRegion)
             val provider = minimaxProvider()
             val result = provider?.validateConfig() ?: run {
                 _uiState.update { it.copy(minimaxStatus = "Provider 未注册") }
@@ -559,9 +568,14 @@ class MainViewModel(
     }
 
     fun testMinimaxConnection() {
-        loadMinimaxConfig()
         viewModelScope.launch {
+            val snapshot = _uiState.value
+            if (snapshot.minimaxApiKey.isBlank()) {
+                _uiState.update { it.copy(minimaxStatus = "请先填写 API Key") }
+                return@launch
+            }
             _uiState.update { it.copy(minimaxStatus = "连接中…") }
+            application.minimaxConfig.save(snapshot.minimaxGroupId, snapshot.minimaxApiKey, snapshot.minimaxRegion)
             val provider = minimaxProvider()
             val result = provider?.validateConfig()
             _uiState.update {
