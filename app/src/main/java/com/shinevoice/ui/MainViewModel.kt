@@ -147,6 +147,11 @@ class MainViewModel(
                 }
             }
         }
+        // Cloud config must be restored on startup: the create page gates the
+        // 云端高清 button on minimaxStatus, which previously only refreshed
+        // when the user opened 设置 (bug: restart + direct cloud use failed).
+        loadMinimaxConfig()
+        loadSystemTtsState()
         refreshModelAndInitialize()
     }
 
@@ -161,7 +166,12 @@ class MainViewModel(
     fun refreshModelAndInitialize() {
         viewModelScope.launch {
             val status = withContext(Dispatchers.IO) { application.modelResolver.inspect(forceIntegrityCheck = true) }
-            _uiState.update { it.copy(modelStatus = status, message = status.summary) }
+            val userMessage = when {
+                status.ready -> "本地模型已就绪，可离线生成。"
+                status.missingFiles.isNotEmpty() -> "本地模型未安装完整，本地生成暂不可用。"
+                else -> "本地模型校验未通过，请到「设置 → 高级 → 开发与诊断」查看。"
+            }
+            _uiState.update { it.copy(modelStatus = status, message = userMessage) }
             if (status.ready) initializeProvider(showMessage = false)
         }
     }
@@ -273,6 +283,12 @@ class MainViewModel(
                 application.ttsManager.synthesize(newRequest(snapshot))
             }
             voice?.let { application.voiceProfileManager.touch(it.id) }
+            if (!result.success) {
+                application.logger.w(
+                    "generation failed provider=${result.providerId} code=${result.error?.code} " +
+                        "user=${result.error?.userMessage} cause=${result.error?.causeMessage}",
+                )
+            }
             _uiState.update {
                 it.copy(
                     isGenerating = false,

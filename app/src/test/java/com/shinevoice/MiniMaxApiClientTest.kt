@@ -143,6 +143,20 @@ class MiniMaxApiClientTest {
         assertTrue(apiError.userMessage.contains("voice not found"))
     }
 
+    @Test
+    fun invalidVoiceId2054MapsToChineseMessage() {
+        // Live-observed contract: HTTP 200 with base_resp.status_code=2054
+        // ("voice id not exist") for a deleted/nonexistent cloned voice.
+        val error = runCatching {
+            MiniMaxApiClient.parseSynthesisAudio(
+                """{"base_resp":{"status_code":2054,"status_msg":"voice id not exist"}}""",
+            )
+        }.exceptionOrNull()!!
+        val apiError = error as com.shinevoice.provider.minimax.ApiException
+        assertEquals(TtsErrorCode.ApiServerError, apiError.code)
+        assertTrue(apiError.userMessage.contains("云端音色不存在"))
+    }
+
     // ---------- error mapping never leaks the key ----------
 
     @Test

@@ -223,7 +223,8 @@ class MiniMaxApiClient(
     }
 
     private fun url(baseUrl: String, path: String, groupId: String?): String {
-        val base = baseUrl.trimEnd('/')
+        // Tolerate stored base URLs that already carry the /v1 suffix.
+        val base = baseUrl.trimEnd('/').removeSuffix("/v1")
         val endpoint = if (path.startsWith("v1/")) path else "v1/$path"
         return if (groupId.isNullOrBlank()) {
             "$base/$endpoint"
@@ -296,6 +297,7 @@ class MiniMaxApiClient(
                 1002, 1039 -> TtsErrorCode.ApiRateLimited
                 1001 -> TtsErrorCode.GenerationTimeout
                 1043 -> TtsErrorCode.InvalidReferenceAudio
+                2054 -> TtsErrorCode.ApiServerError
                 2013 -> TtsErrorCode.ApiServerError
                 else -> TtsErrorCode.ApiServerError
             }
@@ -305,6 +307,7 @@ class MiniMaxApiClient(
                 1002, 1039 -> "云端请求过于频繁，请稍后重试。"
                 1001 -> "云端处理超时，请稍后重试。"
                 1043 -> "参考音频与验证文本不一致，克隆被拒绝。"
+                2054 -> "云端音色不存在或已过期，请重新克隆。"
                 2013 -> "云端参数不合法：$statusMsg"
                 else -> statusMsg
             }
