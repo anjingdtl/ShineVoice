@@ -105,7 +105,7 @@ data class MainUiState(
     val localModels: List<com.shinevoice.domain.model.ModelProfile> = emptyList(),
     val recentLogs: List<String> = emptyList(),
     val selectedProviderId: String = SherpaZipVoiceProvider.PROVIDER_ID,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeMode: ThemeMode = ThemeMode.DARK,
     val autoSave: Boolean = false,
     val playbackRoute: PlaybackRoute = PlaybackRoute.SPEAKER,
     val storageStats: StorageStats? = null,

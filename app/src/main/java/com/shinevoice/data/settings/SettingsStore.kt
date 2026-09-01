@@ -17,8 +17,10 @@ enum class ThemeMode(val storedName: String) {
     DARK("dark");
 
     companion object {
+        // Fresh installs default to the dark cyberpunk theme; an explicit
+        // user choice (system/light) is always preserved once stored.
         fun fromName(name: String?): ThemeMode =
-            entries.firstOrNull { it.storedName == name } ?: SYSTEM
+            entries.firstOrNull { it.storedName == name } ?: DARK
     }
 }
 
