@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.shinevoice.BuildConfig
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.data.settings.MiniMaxRegion
@@ -433,7 +434,7 @@ fun SettingsScreen(
             CyberCard {
                 Text("SHINEVOICE", style = CyberType.sectionCode, color = colors.accent)
                 Spacer(Modifier.height(4.dp))
-                Text("版本 0.1.0（原型）", fontSize = 13.sp, color = colors.textPrimary)
+                Text("版本 ${BuildConfig.VERSION_NAME}（正式版）", fontSize = 13.sp, color = colors.textPrimary)
                 Text("本地优先、云端增强的中文 AI 语音工作台。", fontSize = 11.sp, color = colors.textMuted)
             }
         }

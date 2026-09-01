@@ -1,6 +1,6 @@
-# ShineVoice
+# ShineVoice v1.0
 
-ShineVoice V0.1 是一个本地优先、云端增强、Provider 可扩展的 Android 中文 AI 语音工作台原型。本轮收束 Phase 0（工程与统一 Provider Kernel）、Phase 1（sherpa-onnx + ZipVoice-Distill INT8 本地闭环），并完成 Phase 1.1 收束：模型状态与参考音频解耦、GitHub Actions CI。
+ShineVoice v1.0 是一个本地优先、云端增强、Provider 可扩展的 Android 中文 AI 语音工作台。本版在 V0.1 原型基础上完成赛博朋克开屏视觉、发布版本标记与 release 构建链路收束。
 
 ## 本地构建
 
