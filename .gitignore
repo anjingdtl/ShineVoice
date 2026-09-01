@@ -4,6 +4,7 @@
 .idea/
 *.iml
 local.properties
+.kotlin/
 
 # Local sherpa-onnx binary and runtime assets. Download with scripts/.
 third_party/*.aar
@@ -22,6 +23,9 @@ artifacts/
 # Local OS/editor files
 .DS_Store
 Thumbs.db
+
+# WorkBuddy local workspace data
+.workbuddy/
 
 # Native build output
 .externalNativeBuild/
