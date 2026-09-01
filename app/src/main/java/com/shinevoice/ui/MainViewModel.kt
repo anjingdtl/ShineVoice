@@ -10,8 +10,10 @@ import com.shinevoice.core.storage.ReferenceAudioStatus
 import com.shinevoice.core.storage.ZipVoiceModelStatus
 import com.shinevoice.data.db.GenerationHistoryEntity
 import com.shinevoice.data.db.VoiceProfileEntity
+import com.shinevoice.data.settings.ThemeMode
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
+import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import java.util.UUID
@@ -48,6 +50,28 @@ data class StabilitySummary(
         }
 }
 
+/** Storage footprint summary for the 存储 settings section. */
+data class StorageStats(
+    val generatedCount: Int,
+    val generatedBytes: Long,
+    val modelsBytes: Long,
+    val voicesBytes: Long,
+) {
+    val summary: String
+        get() = buildString {
+            append("历史音频 $generatedCount 个，")
+            append("占 ${formatBytes(generatedBytes)}")
+        }
+
+    companion object {
+        fun formatBytes(bytes: Long): String = when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+            else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        }
+    }
+}
+
 data class MainUiState(
     val targetText: String = "世恒哥，这是 ShineVoice 的本地中文声音克隆测试。",
     val speed: Float = 1.0f,
@@ -70,6 +94,10 @@ data class MainUiState(
     val minimaxStatus: String = "未配置",
     val minimaxClonedVoices: List<com.shinevoice.domain.tts.TtsVoice> = emptyList(),
     val cloudCloning: Boolean = false,
+    val selectedProviderId: String = SherpaZipVoiceProvider.PROVIDER_ID,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val autoSave: Boolean = false,
+    val storageStats: StorageStats? = null,
     val message: String? = null,
 )
 
@@ -83,6 +111,16 @@ class MainViewModel(
         viewModelScope.launch {
             application.historyRepository.observeAll().collectLatest { history ->
                 _uiState.update { it.copy(history = history) }
+            }
+        }
+        viewModelScope.launch {
+            application.settingsStore.themeMode.collectLatest { mode ->
+                _uiState.update { it.copy(themeMode = mode) }
+            }
+        }
+        viewModelScope.launch {
+            application.settingsStore.autoSave.collectLatest { enabled ->
+                _uiState.update { it.copy(autoSave = enabled) }
             }
         }
         viewModelScope.launch {
@@ -200,18 +238,36 @@ class MainViewModel(
             return
         }
         val voice = snapshot.currentVoice
-        val referenceCheck = sherpaProvider()?.validateReference(
-            voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
-            (voice?.referenceText ?: "").trim(),
-        )
-        if (referenceCheck != null && !referenceCheck.success) {
-            _uiState.update { it.copy(message = referenceCheck.message) }
-            return
+        when (snapshot.selectedProviderId) {
+            MiniMaxProvider.PROVIDER_ID -> {
+                if (snapshot.minimaxStatus == "未配置") {
+                    _uiState.update { it.copy(message = "请先在设置中配置云端服务（API Key）。") }
+                    return
+                }
+                val voiceId = voice?.minimaxVoiceId
+                    ?: run {
+                        _uiState.update { it.copy(message = "请先在音色库中为当前音色克隆云端音色。") }
+                        return
+                    }
+            }
+            SherpaZipVoiceProvider.PROVIDER_ID -> {
+                val referenceCheck = sherpaProvider()?.validateReference(
+                    voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
+                    (voice?.referenceText ?: "").trim(),
+                )
+                if (referenceCheck != null && !referenceCheck.success) {
+                    _uiState.update { it.copy(message = referenceCheck.message) }
+                    return
+                }
+            }
+            AndroidSystemTtsProvider.PROVIDER_ID -> Unit
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isGenerating = true, message = "正在使用本地 ZipVoice 生成…") }
+            _uiState.update { it.copy(isGenerating = true, message = "正在生成…") }
             val result = withContext(Dispatchers.Default) {
-                ensureInitialized()
+                if (_uiState.value.selectedProviderId != AndroidSystemTtsProvider.PROVIDER_ID) {
+                    ensureInitialized()
+                }
                 application.ttsManager.synthesize(newRequest(snapshot))
             }
             voice?.let { application.voiceProfileManager.touch(it.id) }
@@ -227,6 +283,54 @@ class MainViewModel(
                 )
             }
         }
+    }
+
+    fun onSelectProvider(providerId: String) {
+        _uiState.update { it.copy(selectedProviderId = providerId) }
+    }
+
+    fun onThemeModeChanged(mode: ThemeMode) {
+        _uiState.update { it.copy(themeMode = mode) }
+        viewModelScope.launch {
+            application.settingsStore.setThemeMode(mode)
+        }
+    }
+
+    fun onAutoSaveChanged(enabled: Boolean) {
+        _uiState.update { it.copy(autoSave = enabled) }
+        viewModelScope.launch {
+            application.settingsStore.setAutoSave(enabled)
+        }
+    }
+
+    fun refreshStorageStats() {
+        viewModelScope.launch {
+            val stats = withContext(Dispatchers.IO) {
+                val generatedDir = java.io.File(application.filesDir, "generated")
+                val generatedFiles = generatedDir.listFiles()?.toList() ?: emptyList()
+                val modelsDir = application.modelResolver.zipVoiceRoot
+                val voicesDir = application.voiceProfileManager.voicesRoot
+                StorageStats(
+                    generatedCount = generatedFiles.size,
+                    generatedBytes = generatedFiles.sumOf { it.length() },
+                    modelsBytes = dirSize(modelsDir),
+                    voicesBytes = dirSize(voicesDir),
+                )
+            }
+            _uiState.update { it.copy(storageStats = stats) }
+        }
+    }
+
+    private fun dirSize(dir: java.io.File): Long {
+        if (!dir.isDirectory) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
+    /** Friendly label for the current generation mode (本地生成/云端高清/系统语音). */
+    fun providerLabel(providerId: String): String = when (providerId) {
+        MiniMaxProvider.PROVIDER_ID -> "云端高清"
+        AndroidSystemTtsProvider.PROVIDER_ID -> "系统语音"
+        else -> "本地生成"
     }
 
     fun runTwentyGenerationStabilityTest() {
@@ -267,9 +371,9 @@ class MainViewModel(
                 val result = withContext(Dispatchers.Default) {
                     ensureInitialized()
                     application.ttsManager.synthesize(
-                        newRequest(_uiState.value).copy(
-                            taskId = "stability-${index + 1}-${UUID.randomUUID()}",
-                        ),
+                        newRequest(
+                            _uiState.value.copy(selectedProviderId = SherpaZipVoiceProvider.PROVIDER_ID),
+                        ).copy(taskId = "stability-${index + 1}-${UUID.randomUUID()}"),
                     )
                 }
                 results += result
@@ -331,21 +435,41 @@ class MainViewModel(
 
     private fun newRequest(state: MainUiState): TtsRequest {
         val voice = state.currentVoice
-        return TtsRequest(
-            taskId = UUID.randomUUID().toString(),
-            text = state.targetText.trim(),
-            providerId = SherpaZipVoiceProvider.PROVIDER_ID,
-            voiceProfileId = voice?.id ?: DEFAULT_VOICE_PROFILE_ID,
-            voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
-            speed = state.speed,
-            extra = mapOf(
-                SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to
-                    (voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath),
-                SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to
-                    (voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT).trim(),
-                SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
-            ),
-        )
+        val providerId = state.selectedProviderId
+        return when (providerId) {
+            MiniMaxProvider.PROVIDER_ID -> TtsRequest(
+                taskId = UUID.randomUUID().toString(),
+                text = state.targetText.trim(),
+                providerId = MiniMaxProvider.PROVIDER_ID,
+                voiceProfileId = voice?.id,
+                voiceId = voice?.minimaxVoiceId,
+                speed = state.speed,
+            )
+            AndroidSystemTtsProvider.PROVIDER_ID -> TtsRequest(
+                taskId = UUID.randomUUID().toString(),
+                text = state.targetText.trim(),
+                providerId = AndroidSystemTtsProvider.PROVIDER_ID,
+                voiceProfileId = voice?.id,
+                voiceId = voice?.androidTtsVoice,
+                speed = state.speed,
+                pitch = 1.0f,
+            )
+            else -> TtsRequest(
+                taskId = UUID.randomUUID().toString(),
+                text = state.targetText.trim(),
+                providerId = SherpaZipVoiceProvider.PROVIDER_ID,
+                voiceProfileId = voice?.id ?: DEFAULT_VOICE_PROFILE_ID,
+                voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
+                speed = state.speed,
+                extra = mapOf(
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to
+                        (voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath),
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to
+                        (voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT).trim(),
+                    SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
+                ),
+            )
+        }
     }
 
     private fun sherpaProvider(): SherpaZipVoiceProvider? =

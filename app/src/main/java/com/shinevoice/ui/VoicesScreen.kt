@@ -298,8 +298,13 @@ private fun VoiceProfileCard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     profile.referenceAudioPath?.let { path ->
-                        Text("参考音频：$path", style = MaterialTheme.typography.bodySmall)
-                    }
+                    val exists = File(path).isFile
+                    Text(
+                        if (exists) "本地参考音频已就绪" else "本地参考音频缺失，请重新录音或导入",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (exists) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                }
                     if (!profile.isDefault) {
                         OutlinedButton(onClick = onDelete) { Text("删除音色") }
                     }

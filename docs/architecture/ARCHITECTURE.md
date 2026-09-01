@@ -48,3 +48,13 @@ UI 不创建 Provider，不直接访问 JNI；Provider 以统一 `TtsRequest/Tts
 
 音频预处理统一走 `core/audio`：WAV 由 `MonoWavReader` 解析，MP3/M4A/AAC 由 `AudioCodecDecoder`（MediaExtractor + MediaCodec）解码，统一重采样为 24 kHz/16-bit/mono 的 `reference.wav`；录音由 `VoiceRecorder`（AudioRecord）产出可直接生成的标准参考音频。创作页的“当前音色”通过底部弹层快速切换，生成与稳定性测试都按当前音色的参考音频与参考文本执行。
 
+## Provider 阵容（Phase 3~6）
+
+```text
+SherpaZipVoiceProvider    本地生成   离线 / 声音克隆（ZipVoice）
+AndroidSystemTtsProvider  系统语音   设备 TTS 引擎，synthesizeToFile 文件输出
+MiniMaxProvider           云端高清   BYOK + Keystore 加密，上传克隆 voice_id，t2a_v2 合成
+```
+
+创作页的“生成方式”只展示以上三个用户标签；`TtsRequest.providerId` 由 ViewModel 按所选方式路由，Provider 内部对象不暴露给普通 UI。设置页「高级 → 开发与诊断」集中展示 Provider 快照、模型目录、完整性校验、ABI、RTF/PSS 与 20 次稳定性测试等工程数据。历史页是生成文件库：日期分组、多选、批量删除/分享/导出 ZIP，不展示耗时/错误码等 Debug 字段。
+

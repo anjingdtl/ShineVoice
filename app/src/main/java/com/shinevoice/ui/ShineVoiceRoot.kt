@@ -3,6 +3,7 @@ package com.shinevoice.ui
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,8 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -40,15 +43,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.storage.AudioPlaybackController
-import com.shinevoice.data.db.GenerationHistoryEntity
+import com.shinevoice.data.settings.ThemeMode
+import com.shinevoice.domain.tts.TtsResult
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 private enum class AppPage(val title: String) {
@@ -91,7 +93,13 @@ fun ShineVoiceRoot(
         }
     }
 
-    MaterialTheme {
+    val darkTheme = when (state.themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+
+    MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = { TopAppBar(title = { Text("ShineVoice") }) },
@@ -116,6 +124,8 @@ fun ShineVoiceRoot(
                     onSpeedChanged = viewModel::onSpeedChanged,
                     onReferenceTextChanged = viewModel::onCurrentReferenceTextChanged,
                     onCurrentVoiceClick = { showVoicePicker = true },
+                    onSelectProvider = viewModel::onSelectProvider,
+                    providerLabel = viewModel::providerLabel,
                     onGenerate = viewModel::generate,
                     onPlay = {
                         val source = state.lastResult?.audioFile?.let(::File)
@@ -123,6 +133,28 @@ fun ShineVoiceRoot(
                             .onFailure { Toast.makeText(context, "播放失败：${it.message}", Toast.LENGTH_LONG).show() }
                     },
                     onSave = { saveLauncher.launch("shinevoice-${System.currentTimeMillis()}.wav") },
+                    onShare = {
+                        val source = state.lastResult?.audioFile?.let(::File)
+                        if (source == null) {
+                            Toast.makeText(context, "没有可分享的音频。", Toast.LENGTH_SHORT).show()
+                            return@let
+                        }
+                        runCatching {
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                source,
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "audio/wav"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(intent, "分享语音"))
+                        }.onFailure {
+                            Toast.makeText(context, "分享失败：${it.message}", Toast.LENGTH_LONG).show()
+                        }
+                    },
                 )
 
                 AppPage.VOICES -> VoicesScreen(
@@ -169,17 +201,25 @@ private fun CreateScreen(
     onSpeedChanged: (Float) -> Unit,
     onReferenceTextChanged: (String) -> Unit,
     onCurrentVoiceClick: () -> Unit,
+    onSelectProvider: (String) -> Unit,
+    providerLabel: (String) -> String,
     onGenerate: () -> Unit,
     onPlay: () -> Unit,
     onSave: () -> Unit,
+    onShare: () -> Unit,
 ) {
+    val providerOptions = listOf(
+        com.shinevoice.provider.sherpa.SherpaZipVoiceProvider.PROVIDER_ID,
+        com.shinevoice.provider.minimax.MiniMaxProvider.PROVIDER_ID,
+        com.shinevoice.provider.androidtts.AndroidSystemTtsProvider.PROVIDER_ID,
+    )
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("本地优先的中文声音克隆", style = MaterialTheme.typography.headlineSmall)
+            Text("中文 AI 语音工作台", style = MaterialTheme.typography.headlineSmall)
         }
         item {
             Card(onClick = onCurrentVoiceClick, modifier = Modifier.fillMaxWidth()) {
@@ -189,7 +229,26 @@ private fun CreateScreen(
                         state.currentVoice?.displayName ?: "默认参考音色",
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Text("生成方式：本地生成 · 点击切换音色", style = MaterialTheme.typography.bodySmall)
+                    Text("点击切换音色", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        item {
+            Text("生成方式", style = MaterialTheme.typography.labelMedium)
+            androidx.compose.material3.SingleChoiceSegmentedButtonRow(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                providerOptions.forEachIndexed { index, providerId ->
+                    androidx.compose.material3.SegmentedButton(
+                        selected = state.selectedProviderId == providerId,
+                        onClick = { onSelectProvider(providerId) },
+                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = providerOptions.size,
+                        ),
+                    ) {
+                        Text(providerLabel(providerId))
+                    }
                 }
             }
         }
@@ -223,7 +282,8 @@ private fun CreateScreen(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("参考文本（当前音色，需与参考音频一致）") },
                 minLines = 2,
-                enabled = !state.isGenerating && !state.stabilityRunning,
+                enabled = !state.isGenerating && !state.stabilityRunning &&
+                    state.selectedProviderId == com.shinevoice.provider.sherpa.SherpaZipVoiceProvider.PROVIDER_ID,
             )
         }
         item {
@@ -231,9 +291,20 @@ private fun CreateScreen(
                 onClick = onGenerate,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.isGenerating && !state.stabilityRunning &&
-                    state.modelStatus?.ready == true && state.referenceStatus?.ready == true,
+                    when (state.selectedProviderId) {
+                        com.shinevoice.provider.minimax.MiniMaxProvider.PROVIDER_ID ->
+                            state.minimaxStatus != "未配置" && state.currentVoice?.minimaxVoiceId != null
+                        else -> true
+                    },
             ) {
-                Text(if (state.isGenerating) "生成中…" else "生成语音")
+                Text(
+                    when {
+                        state.isGenerating -> "生成中…"
+                        state.selectedProviderId == com.shinevoice.provider.minimax.MiniMaxProvider.PROVIDER_ID &&
+                            state.currentVoice?.minimaxVoiceId == null -> "先克隆云端音色"
+                        else -> "生成语音"
+                    },
+                )
             }
         }
         item {
@@ -242,11 +313,19 @@ private fun CreateScreen(
             }
         }
         state.lastResult?.let { result ->
-            item { GenerationResultCard(result, onPlay, onSave) }
+            item {
+                GenerationResultCard(
+                    result = result,
+                    providerLabel = providerLabel(result.providerId),
+                    onPlay = onPlay,
+                    onSave = onSave,
+                    onShare = onShare,
+                )
+            }
         }
         item {
             Text(
-                "请仅使用本人声音或已获得明确授权的声音素材。Phase 1 固定使用本地参考音频，不上传网络。",
+                "请仅使用本人声音或已获得明确授权的声音素材。本地生成不联网；云端生成会把文本与参考音频上传到所选云端服务。",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -255,20 +334,23 @@ private fun CreateScreen(
 
 @Composable
 private fun GenerationResultCard(
-    result: com.shinevoice.domain.tts.TtsResult,
+    result: TtsResult,
+    providerLabel: String,
     onPlay: () -> Unit,
     onSave: () -> Unit,
+    onShare: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (result.success) "生成成功" else "生成失败", fontWeight = FontWeight.Bold)
-            Text("生成方式：本地生成")
+            Text("生成方式：$providerLabel")
             Text("耗时：${result.elapsedMs} ms · 音频长度：${if (result.durationMs != null) "${result.durationMs} ms" else "-"}")
             result.error?.let { Text("错误：${it.userMessage}") }
             if (result.success) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onPlay) { Text("播放") }
                     Button(onClick = onSave) { Text("保存") }
+                    Button(onClick = onShare) { Text("分享") }
                 }
             }
         }
@@ -284,30 +366,37 @@ private fun SettingsScreen(
     onRunStability: () -> Unit,
 ) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { viewModel.loadMinimaxConfig() }
+    val application = context.applicationContext as ShineVoiceApplication
+    var showDiagnostics by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        viewModel.loadMinimaxConfig()
+        viewModel.refreshStorageStats()
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("设置", style = MaterialTheme.typography.headlineSmall) }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("ZipVoice 模型", fontWeight = FontWeight.Bold)
-                    Text(state.modelStatus?.summary ?: "正在检查…")
-                    Text(state.modelStatus?.rootPath ?: "")
-                    Text("ABI：arm64-v8a / x86_64 · Provider：CPU", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onRefresh, enabled = !state.isGenerating && !state.stabilityRunning) {
-                        Text("重新检测并加载")
-                    }
-                }
-            }
-        }
+
+        // 模型与服务
+        item { SectionTitle("模型与服务") }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("云端高清（MiniMax）", fontWeight = FontWeight.Bold)
+                    Text("本地模型", fontWeight = FontWeight.Medium)
+                    Text(
+                        when {
+                            state.modelStatus?.ready == true -> "本地模型已就绪，可离线生成"
+                            state.modelStatus?.missingFiles?.isNotEmpty() == true ->
+                                "本地模型未安装完整：${state.modelStatus.missingFiles.joinToString()}"
+                            else -> "正在检查本地模型…"
+                        },
+                    )
+                    Button(onClick = onRefresh, enabled = !state.isGenerating && !state.stabilityRunning) {
+                        Text("重新检测")
+                    }
+                    Text("云端高清", fontWeight = FontWeight.Medium)
                     Text("状态：${state.minimaxStatus}")
                     OutlinedTextField(
                         value = state.minimaxGroupId,
@@ -342,41 +431,156 @@ private fun SettingsScreen(
                     if (state.minimaxClonedVoices.isNotEmpty()) {
                         Text("云端音色：${state.minimaxClonedVoices.joinToString { it.displayName }}")
                     }
-                    Text(
-                        "API Key 使用 Android Keystore 加密保存，不会写入源码、日志或提交到 Git。",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    HorizontalDivider()
+                    Text("系统语音", fontWeight = FontWeight.Medium)
+                    Text("使用设备自带的中文语音引擎朗读，支持语速调节。", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
+
+        // 外观
+        item { SectionTitle("外观") }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("稳定性测试", fontWeight = FontWeight.Bold)
-                    Text("连续 20 次真实 Native ZipVoice 生成，串行执行并写入历史。")
-                    Button(
-                        onClick = onRunStability,
-                        enabled = state.modelStatus?.ready == true && state.referenceStatus?.ready == true &&
-                            !state.isGenerating && !state.stabilityRunning,
+                    Text("主题", fontWeight = FontWeight.Medium)
+                    androidx.compose.material3.SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (state.stabilityRunning) "测试中 ${state.stabilityCompleted}/20" else "运行 20 次测试")
-                    }
-                    state.stabilitySummary?.let { summary ->
-                        Text("成功率：${summary.successRate}")
-                        Text("平均：${summary.averageElapsedMs ?: "-"} ms · 最大：${summary.maxElapsedMs ?: "-"} ms")
-                        Text("RTF：平均 ${summary.averageRtf?.let { "%.3f".format(Locale.US, it) } ?: "-"} · 最大 ${summary.maxRtf?.let { "%.3f".format(Locale.US, it) } ?: "-"}")
-                        Text("PSS：${summary.memoryBeforePssKb ?: "-"} → ${summary.memoryAfterPssKb ?: "-"} KB · 增量 ${summary.memoryDeltaPssKb ?: "-"} KB")
-                        if (summary.failedTasks.isNotEmpty()) {
-                            Text("失败任务：${summary.failedTasks.joinToString()}")
+                        ThemeMode.entries.forEachIndexed { index, mode ->
+                            androidx.compose.material3.SegmentedButton(
+                                selected = state.themeMode == mode,
+                                onClick = { viewModel.onThemeModeChanged(mode) },
+                                shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = ThemeMode.entries.size,
+                                ),
+                            ) {
+                                Text(
+                                    when (mode) {
+                                        ThemeMode.SYSTEM -> "跟随系统"
+                                        ThemeMode.LIGHT -> "亮色"
+                                        ThemeMode.DARK -> "暗色"
+                                    },
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+
+        // 音频
+        item { SectionTitle("音频") }
         item {
-            HorizontalDivider()
-            Spacer(Modifier.height(2.dp))
-            Text("本地语音：ZipVoice · 系统语音：Android TTS · 云端：MiniMax（BYOK）", style = MaterialTheme.typography.bodySmall)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.Switch(
+                        checked = state.autoSave,
+                        onCheckedChange = viewModel::onAutoSaveChanged,
+                    )
+                    Text("自动保存生成结果到本机", style = MaterialTheme.typography.bodyMedium)
+                    Text("输出格式：WAV（16-bit 单声道 24 kHz）", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        // 存储
+        item { SectionTitle("存储") }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("占用空间", fontWeight = FontWeight.Medium)
+                    Text(state.storageStats?.summary ?: "正在统计…")
+                    state.storageStats?.let { stats ->
+                        Text("本地模型：${StorageStats.formatBytes(stats.modelsBytes)}")
+                        Text("音色参考音频：${StorageStats.formatBytes(stats.voicesBytes)}")
+                    }
+                    Text("历史记录可在“历史”页多选删除。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        // 隐私
+        item { SectionTitle("隐私") }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("请仅使用本人声音或已获得明确授权的声音素材。", fontWeight = FontWeight.Medium)
+                    Text("本地生成不联网；云端生成会把文本与参考音频上传到所选云端服务。", style = MaterialTheme.typography.bodyMedium)
+                    Text("云端 API Key 使用 Android Keystore 加密保存，不写入源码、日志或提交到 Git。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        // 高级
+        item { SectionTitle("高级") }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { showDiagnostics = !showDiagnostics }) {
+                        Text(if (showDiagnostics) "收起开发与诊断" else "开发与诊断")
+                    }
+                    if (showDiagnostics) {
+                        Text("状态", fontWeight = FontWeight.Medium)
+                        application.providerRegistry.snapshots().forEach { snapshot ->
+                            Text("${snapshot.displayName}：${snapshot.state.name}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        state.modelStatus?.let { status ->
+                            Text("模型目录：${status.rootPath}", style = MaterialTheme.typography.bodySmall)
+                            Text("缺失文件：${status.missingFiles.joinToString().ifEmpty { "无" }}", style = MaterialTheme.typography.bodySmall)
+                            Text("完整性校验：${if (status.checksumVerified) "通过" else "未通过"}（SHA-256）", style = MaterialTheme.typography.bodySmall)
+                            status.manifest?.let { manifest ->
+                                Text("模型：${manifest.modelId} v${manifest.version}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        state.referenceStatus?.let { reference ->
+                            Text("参考音频：${reference.referencePath}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("架构（ABI）：arm64-v8a / x86_64", style = MaterialTheme.typography.bodySmall)
+                        HorizontalDivider()
+                        Text("稳定性测试（连续 20 次本地生成）", fontWeight = FontWeight.Medium)
+                        Button(
+                            onClick = onRunStability,
+                            enabled = state.modelStatus?.ready == true &&
+                                !state.isGenerating && !state.stabilityRunning,
+                        ) {
+                            Text(if (state.stabilityRunning) "测试中 ${state.stabilityCompleted}/20" else "运行 20 次测试")
+                        }
+                        state.stabilitySummary?.let { summary ->
+                            Text("成功率：${summary.successRate} · 平均 ${summary.averageElapsedMs ?: "-"} ms · 最大 ${summary.maxElapsedMs ?: "-"} ms")
+                            Text("RTF：平均 ${summary.averageRtf?.let { "%.3f".format(Locale.US, it) } ?: "-"} · 最大 ${summary.maxRtf?.let { "%.3f".format(Locale.US, it) } ?: "-"}")
+                            Text("PSS：${summary.memoryBeforePssKb ?: "-"} → ${summary.memoryAfterPssKb ?: "-"} KB · 增量 ${summary.memoryDeltaPssKb ?: "-"} KB")
+                            if (summary.failedTasks.isNotEmpty()) {
+                                Text("失败任务：${summary.failedTasks.joinToString()}")
+                            }
+                        }
+                        Text("以上为工程运行数据，普通用户无需关注。", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        // 关于
+        item { SectionTitle("关于") }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("ShineVoice", fontWeight = FontWeight.Medium)
+                    Text("版本 0.1.0（原型）")
+                    Text("本地优先、云端增强的中文 AI 语音工作台。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
