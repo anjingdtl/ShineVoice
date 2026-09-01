@@ -123,7 +123,6 @@ fun ShineVoiceRoot(
                     padding = padding,
                     onTargetTextChanged = viewModel::onTargetTextChanged,
                     onSpeedChanged = viewModel::onSpeedChanged,
-                    onReferenceTextChanged = viewModel::onCurrentReferenceTextChanged,
                     onCurrentVoiceClick = { showVoicePicker = true },
                     onSelectProvider = viewModel::onSelectProvider,
                     providerLabel = viewModel::providerLabel,
@@ -200,7 +199,6 @@ private fun CreateScreen(
     padding: PaddingValues,
     onTargetTextChanged: (String) -> Unit,
     onSpeedChanged: (Float) -> Unit,
-    onReferenceTextChanged: (String) -> Unit,
     onCurrentVoiceClick: () -> Unit,
     onSelectProvider: (String) -> Unit,
     providerLabel: (String) -> String,
@@ -230,6 +228,15 @@ private fun CreateScreen(
                         state.currentVoice?.displayName ?: "默认参考音色",
                         style = MaterialTheme.typography.titleMedium,
                     )
+                    val isLocalMode = state.selectedProviderId ==
+                        com.shinevoice.provider.sherpa.SherpaZipVoiceProvider.PROVIDER_ID
+                    if (isLocalMode && state.referenceStatus?.ready != true) {
+                        Text(
+                            state.referenceStatus?.summary ?: "该音色还没有可用于本地生成的参考音频",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Text("点击切换音色", style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -267,17 +274,6 @@ private fun CreateScreen(
                 valueRange = 0.5f..2.0f,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.isGenerating && !state.stabilityRunning,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = state.currentVoice?.referenceText ?: "",
-                onValueChange = onReferenceTextChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("参考文本（当前音色，需与参考音频一致）") },
-                minLines = 2,
-                enabled = !state.isGenerating && !state.stabilityRunning &&
-                    state.selectedProviderId == com.shinevoice.provider.sherpa.SherpaZipVoiceProvider.PROVIDER_ID,
             )
         }
         item {
@@ -535,7 +531,7 @@ private fun SettingsScreen(
                             }
                         }
                         state.referenceStatus?.let { reference ->
-                            Text("参考音频：${reference.referencePath}", style = MaterialTheme.typography.bodySmall)
+                            Text("参考音频：${reference.referenceAudioPath ?: "-"}（${reference.summary}）", style = MaterialTheme.typography.bodySmall)
                         }
                         Text("架构（ABI）：arm64-v8a / x86_64", style = MaterialTheme.typography.bodySmall)
                         HorizontalDivider()

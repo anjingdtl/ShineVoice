@@ -9,6 +9,26 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
 /**
+ * Per-profile reference readiness. Each VoiceProfile judges only by its own
+ * referenceAudioPath + referenceText; the shared voices/default/reference.wav
+ * is never implicitly assumed.
+ */
+data class VoiceReferenceStatus(
+    val referenceAudioPath: String?,
+    val audioReady: Boolean,
+    val referenceTextReady: Boolean,
+) {
+    val ready: Boolean get() = audioReady && referenceTextReady
+
+    val summary: String
+        get() = when {
+            !audioReady -> "缺少参考音频，请先录音或导入"
+            !referenceTextReady -> "参考文本为空，请在音色中填写与音频一致的文字"
+            else -> "参考音频与参考文本已就绪"
+        }
+}
+
+/**
  * Application boundary for the user's voice library (音色库). Owns profile rows
  * together with their on-disk reference audio, keeping DB and files consistent.
  */
@@ -135,6 +155,19 @@ class VoiceProfileManager(
     }
 
     fun profileDir(id: String): File = File(voicesRoot, id)
+
+    /** Per-profile reference readiness based only on the profile's own inputs. */
+    fun referenceStatus(profile: VoiceProfileEntity?): VoiceReferenceStatus {
+        if (profile == null) {
+            return VoiceReferenceStatus(referenceAudioPath = null, audioReady = false, referenceTextReady = false)
+        }
+        val audioReady = profile.referenceAudioPath?.let { File(it).isFile } == true
+        return VoiceReferenceStatus(
+            referenceAudioPath = profile.referenceAudioPath,
+            audioReady = audioReady,
+            referenceTextReady = !profile.referenceText.isNullOrBlank(),
+        )
+    }
 
     companion object {
         const val DEFAULT_PROFILE_ID = "default-local-reference"

@@ -62,6 +62,7 @@ fun VoicesScreen(
     val scope = rememberCoroutineScope()
     var creating by remember { mutableStateOf(false) }
     var profileName by remember { mutableStateOf("") }
+    var profileReferenceText by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var recordingId by remember { mutableStateOf<String?>(null) }
     var pendingImportId by remember { mutableStateOf<String?>(null) }
@@ -212,8 +213,15 @@ fun VoicesScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    OutlinedTextField(
+                        value = profileReferenceText,
+                        onValueChange = { profileReferenceText = it },
+                        label = { Text("参考文本（与录音内容一致，可稍后填写）") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text(
-                        "创建后请录音或导入一段清晰的参考音频（推荐 5~15 秒），并填写与音频一致的参考文本。",
+                        "创建后请录音或导入一段清晰的参考音频（推荐 5~15 秒），参考文本需与音频内容一致。",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -222,9 +230,13 @@ fun VoicesScreen(
                 Button(
                     enabled = profileName.isNotBlank(),
                     onClick = {
-                        viewModel.createVoice(profileName.trim())
+                        viewModel.createVoice(
+                            displayName = profileName.trim(),
+                            referenceText = profileReferenceText.takeIf { it.isNotBlank() },
+                        )
                         creating = false
                         profileName = ""
+                        profileReferenceText = ""
                     },
                 ) { Text("创建") }
             },

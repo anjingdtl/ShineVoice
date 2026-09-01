@@ -6,11 +6,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.storage.ModelDirectoryResolver
-import com.shinevoice.core.storage.ReferenceAudioStatus
 import com.shinevoice.core.storage.ZipVoiceModelStatus
 import com.shinevoice.data.db.GenerationHistoryEntity
 import com.shinevoice.data.db.VoiceProfileEntity
 import com.shinevoice.data.settings.ThemeMode
+import com.shinevoice.domain.voice.VoiceReferenceStatus
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
@@ -76,7 +76,7 @@ data class MainUiState(
     val targetText: String = "世恒哥，这是 ShineVoice 的本地中文声音克隆测试。",
     val speed: Float = 1.0f,
     val modelStatus: ZipVoiceModelStatus? = null,
-    val referenceStatus: ReferenceAudioStatus? = null,
+    val referenceStatus: VoiceReferenceStatus? = null,
     val currentVoice: VoiceProfileEntity? = null,
     val voices: List<VoiceProfileEntity> = emptyList(),
     val providerInitialized: Boolean = false,
@@ -135,9 +135,7 @@ class MainViewModel(
                 _uiState.update {
                     it.copy(
                         currentVoice = voice,
-                        referenceStatus = application.modelResolver.referenceAudioStatus(
-                            voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
-                        ),
+                        referenceStatus = application.voiceProfileManager.referenceStatus(voice),
                     )
                 }
             }
@@ -153,14 +151,6 @@ class MainViewModel(
         _uiState.update { it.copy(speed = value.coerceIn(0.5f, 2.0f)) }
     }
 
-    /** Edits the current voice's referenceText (bound to the create page). */
-    fun onCurrentReferenceTextChanged(value: String) {
-        val current = _uiState.value.currentVoice ?: return
-        viewModelScope.launch {
-            application.voiceProfileManager.updateReference(current.id, referenceText = value)
-        }
-    }
-
     fun refreshModelAndInitialize() {
         viewModelScope.launch {
             val status = withContext(Dispatchers.IO) { application.modelResolver.inspect(forceIntegrityCheck = true) }
@@ -169,11 +159,12 @@ class MainViewModel(
         }
     }
 
-    fun createVoice(displayName: String, onCreated: (String) -> Unit = {}) {
+    /** Creates a voice profile with its optional reference text (音色页创建入口). */
+    fun createVoice(displayName: String, referenceText: String?, onCreated: (String) -> Unit = {}) {
         viewModelScope.launch {
             val id = application.voiceProfileManager.create(
                 displayName = displayName,
-                referenceText = null,
+                referenceText = referenceText,
                 referenceAudioPath = null,
             ).id
             application.voiceProfileManager.setCurrent(id)
@@ -253,9 +244,11 @@ class MainViewModel(
                     }
             }
             SherpaZipVoiceProvider.PROVIDER_ID -> {
+                // Validate exactly the inputs newRequest() will send: the
+                // current profile's own reference audio + text.
                 val referenceCheck = sherpaProvider()?.validateReference(
                     voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
-                    (voice?.referenceText ?: "").trim(),
+                    (voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT).trim(),
                 )
                 if (referenceCheck != null && !referenceCheck.success) {
                     _uiState.update { it.copy(message = referenceCheck.message) }
@@ -358,7 +351,7 @@ class MainViewModel(
             val voice = _uiState.value.currentVoice
             val referenceCheck = sherpaProvider()?.validateReference(
                 voice?.referenceAudioPath ?: application.modelResolver.referenceAudio.absolutePath,
-                (voice?.referenceText ?: "").trim(),
+                (voice?.referenceText ?: ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT).trim(),
             )
             if (referenceCheck != null && !referenceCheck.success) {
                 _uiState.update {
