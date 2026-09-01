@@ -21,7 +21,7 @@ class ShineVoiceApplication : Application() {
     val settingsStore by lazy { SettingsStore(this) }
     val database by lazy {
         Room.databaseBuilder(this, ShineVoiceDatabase::class.java, "shinevoice.db")
-            .fallbackToDestructiveMigration()
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
     val historyRepository by lazy { RoomGenerationHistoryRepository(database.generationHistoryDao()) }
