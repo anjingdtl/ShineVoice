@@ -14,14 +14,17 @@ interface GenerationHistoryDao {
     @Query("SELECT * FROM generation_history ORDER BY createdAt DESC LIMIT 100")
     fun observeRecent(): Flow<List<GenerationHistoryEntity>>
 
-    @Query("DELETE FROM generation_history WHERE taskId IN (:ids)")
-    suspend fun deleteByIds(ids: List<String>)
-
-    @Query("DELETE FROM generation_history WHERE audioPath IS NOT NULL AND audioPath IN (:paths)")
-    suspend fun deleteByAudioPaths(paths: List<String>)
+    @Query("SELECT * FROM generation_history ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<GenerationHistoryEntity>>
 
     @Query("SELECT * FROM generation_history WHERE taskId IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<GenerationHistoryEntity>
+
+    @Query("DELETE FROM generation_history WHERE taskId IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    @Query("DELETE FROM generation_history")
+    suspend fun deleteAll()
 }
 
 @Dao

@@ -22,6 +22,8 @@ import kotlinx.coroutines.launch
 
 class ShineVoiceApplication : Application() {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Transient hand-off of a freshly built ZIP before the SAF save dialog completes. */
+    @Volatile var zippedExport: java.io.File? = null
     val logger by lazy { AppLogger() }
     val modelResolver by lazy { ModelDirectoryResolver(this) }
     val wavStorage by lazy { WavStorage(this) }

@@ -7,6 +7,11 @@ import java.io.File
 class AudioPlaybackController {
     private var player: MediaPlayer? = null
 
+    /** Invoked on natural playback completion (null until a file is playing). */
+    var onCompletion: (() -> Unit)? = null
+    var currentFile: File? = null
+        private set
+
     fun play(file: File): Result<Unit> = runCatching {
         require(file.isFile) { "WAV file does not exist" }
         player?.release()
@@ -14,10 +19,15 @@ class AudioPlaybackController {
         val nextPlayer = MediaPlayer()
         try {
             nextPlayer.setDataSource(file.absolutePath)
-            nextPlayer.setOnCompletionListener { releaseCurrent() }
+            nextPlayer.setOnCompletionListener {
+                currentFile = null
+                onCompletion?.invoke()
+                releaseCurrent()
+            }
             nextPlayer.prepare()
             nextPlayer.start()
             player = nextPlayer
+            currentFile = file
         } catch (throwable: Throwable) {
             nextPlayer.release()
             throw throwable
@@ -26,10 +36,12 @@ class AudioPlaybackController {
 
     fun stop() {
         runCatching { player?.stop() }
+        currentFile = null
         releaseCurrent()
     }
 
     fun release() {
+        currentFile = null
         releaseCurrent()
     }
 

@@ -60,6 +60,9 @@ data class MainUiState(
     val lastResult: TtsResult? = null,
     val stabilitySummary: StabilitySummary? = null,
     val history: List<GenerationHistoryEntity> = emptyList(),
+    val historySelection: Set<String> = emptySet(),
+    val nowPlayingTaskId: String? = null,
+    val nowPlayingTitle: String? = null,
     val message: String? = null,
 )
 
@@ -71,7 +74,7 @@ class MainViewModel(
 
     init {
         viewModelScope.launch {
-            application.historyRepository.observeRecent().collectLatest { history ->
+            application.historyRepository.observeAll().collectLatest { history ->
                 _uiState.update { it.copy(history = history) }
             }
         }
@@ -340,6 +343,41 @@ class MainViewModel(
 
     private fun sherpaProvider(): SherpaZipVoiceProvider? =
         application.providerRegistry.get(SherpaZipVoiceProvider.PROVIDER_ID) as? SherpaZipVoiceProvider
+
+    fun toggleHistorySelect(taskId: String) {
+        _uiState.update {
+            val selection = it.historySelection.toMutableSet()
+            if (!selection.add(taskId)) selection.remove(taskId)
+            it.copy(historySelection = selection)
+        }
+    }
+
+    fun setHistorySelectAll(select: Boolean) {
+        _uiState.update {
+            it.copy(historySelection = if (select) it.history.map { h -> h.taskId }.toSet() else emptySet())
+        }
+    }
+
+    fun exitHistorySelection() {
+        _uiState.update { it.copy(historySelection = emptySet()) }
+    }
+
+    /** Deletes selected history rows together with their on-disk WAV files. */
+    fun deleteSelectedHistory() {
+        val ids = _uiState.value.historySelection.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            application.historyRepository.getByIds(ids)
+                .mapNotNull { it.audioPath }
+                .forEach { path -> runCatching { java.io.File(path).delete() } }
+            application.historyRepository.deleteByIds(ids)
+            _uiState.update { it.copy(historySelection = emptySet()) }
+        }
+    }
+
+    fun setNowPlaying(taskId: String?, title: String?) {
+        _uiState.update { it.copy(nowPlayingTaskId = taskId, nowPlayingTitle = title) }
+    }
 
     private fun readMemoryPssKb(): Int? = runCatching {
         Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }.totalPss

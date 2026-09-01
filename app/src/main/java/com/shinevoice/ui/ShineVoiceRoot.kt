@@ -83,7 +83,11 @@ fun ShineVoiceRoot(
     }
 
     DisposableEffect(playbackController) {
-        onDispose { playbackController.release() }
+        playbackController.onCompletion = { viewModel.setNowPlaying(null, null) }
+        onDispose {
+            playbackController.onCompletion = null
+            playbackController.release()
+        }
     }
 
     MaterialTheme {
@@ -127,7 +131,13 @@ fun ShineVoiceRoot(
                     playbackController = playbackController,
                     viewModel = viewModel,
                 )
-                AppPage.HISTORY -> HistoryScreen(state.history, padding)
+                AppPage.HISTORY -> HistoryScreen(
+                    state = state,
+                    padding = padding,
+                    application = application,
+                    playbackController = playbackController,
+                    viewModel = viewModel,
+                )
                 AppPage.SETTINGS -> SettingsScreen(
                     state = state,
                     padding = padding,
@@ -259,37 +269,6 @@ private fun GenerationResultCard(
                     Button(onClick = onSave) { Text("保存") }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun HistoryScreen(history: List<GenerationHistoryEntity>, padding: PaddingValues) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item { Text("生成历史", style = MaterialTheme.typography.headlineSmall) }
-        if (history.isEmpty()) {
-            item { Text("暂无生成记录。") }
-        } else {
-            items(history, key = { it.taskId }) { item -> HistoryItem(item) }
-        }
-    }
-}
-
-@Composable
-private fun HistoryItem(item: GenerationHistoryEntity) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(item.inputText, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(
-                "${item.providerId} · ${if (item.success) "成功" else "失败"} · ${item.elapsedMs} ms · " +
-                    SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA).format(Date(item.createdAt)),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            item.errorMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
