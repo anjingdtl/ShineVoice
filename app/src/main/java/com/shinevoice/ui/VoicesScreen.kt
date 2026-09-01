@@ -163,20 +163,7 @@ fun VoicesScreen(
             CyberPageHeader(title = "VOICE IDENTITY LIBRARY", code = "声纹档案库")
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CyberButton(text = "＋ 创建音色", onClick = { creating = true }, modifier = Modifier.weight(1f))
-                CyberOutlinedButton(
-                    text = "切换当前音色 ▸",
-                    onClick = {
-                        val current = state.voices.firstOrNull { it.id == state.currentVoice?.id }
-                        val next = state.voices.getOrNull(
-                            (state.voices.indexOf(current) + 1).mod(state.voices.size),
-                        )
-                        next?.let { viewModel.setCurrentVoice(it.id) }
-                    },
-                    enabled = state.voices.size > 1,
-                )
-            }
+            CyberButton(text = "＋ 创建音色", onClick = { creating = true }, modifier = Modifier.fillMaxWidth())
         }
         if (state.voices.isEmpty()) {
             item {
@@ -507,7 +494,11 @@ fun VoicePickerSheet(
     onDismiss: () -> Unit,
 ) {
     val colors = LocalCyberColors.current
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        contentColor = colors.textPrimary,
+    ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             CyberPageHeader(title = "SELECT VOICE", code = "选择当前音色")
             Spacer(Modifier.height(10.dp))
