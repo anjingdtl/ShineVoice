@@ -67,6 +67,7 @@ scripts/fetch-sherpa-onnx.sh   # 拉取官方 AAR 并校验 SHA-256
 - **云端高清**（MiniMax，BYOK）：API Key 经 Android Keystore 加密保存；测试连接；上传参考音频克隆云端音色并保存 voice_id；云端合成、播放、保存、分享。
 - **生成历史**：按日期分组折叠，点击播放，迷你播放器，多选 / 全选 / 批量删除 / 批量分享 / ZIP 打包导出。
 - **设置**：模型与服务 / 外观（跟随系统、亮色、暗色）/ 音频 / 存储 / 隐私 / 高级（开发与诊断）/ 关于。
+- **赛博朋克视觉体系**：深黑基底 + HUD 网格 + 荧光黄核心操作 + 青色状态信息的统一设计语言（CyberTheme/CyberCard/CyberButton 等组件库），创作页为语音合成终端、音色页为声纹档案库、历史页为 Audio Archive、设置页为 SYSTEM CONTROL；亮色主题保持同一设计语言。
 - 工程术语（Provider、JNI、RTF、PSS、ABI、providerId、voiceId、referenceAudioPath 等）不进入普通界面，统一收纳在「设置 → 高级 → 开发与诊断」。
 
 ## 当前边界
