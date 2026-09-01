@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.shinevoice.ShineVoiceApplication
+import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.core.storage.ModelDirectoryResolver
 import com.shinevoice.core.storage.ZipVoiceModelStatus
 import com.shinevoice.data.db.GenerationHistoryEntity
@@ -106,6 +107,7 @@ data class MainUiState(
     val selectedProviderId: String = SherpaZipVoiceProvider.PROVIDER_ID,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val autoSave: Boolean = false,
+    val playbackRoute: PlaybackRoute = PlaybackRoute.SPEAKER,
     val storageStats: StorageStats? = null,
     val message: String? = null,
 )
@@ -130,6 +132,11 @@ class MainViewModel(
         viewModelScope.launch {
             application.settingsStore.autoSave.collectLatest { enabled ->
                 _uiState.update { it.copy(autoSave = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            application.settingsStore.playbackRoute.collectLatest { route ->
+                _uiState.update { it.copy(playbackRoute = route) }
             }
         }
         viewModelScope.launch {
@@ -318,6 +325,13 @@ class MainViewModel(
         _uiState.update { it.copy(autoSave = enabled) }
         viewModelScope.launch {
             application.settingsStore.setAutoSave(enabled)
+        }
+    }
+
+    fun onPlaybackRouteChanged(route: PlaybackRoute) {
+        _uiState.update { it.copy(playbackRoute = route) }
+        viewModelScope.launch {
+            application.settingsStore.setPlaybackRoute(route)
         }
     }
 

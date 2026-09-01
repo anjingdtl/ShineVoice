@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinevoice.ShineVoiceApplication
+import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.settings.ThemeMode
 import com.shinevoice.domain.tts.TtsResult
@@ -94,6 +95,11 @@ fun ShineVoiceRoot(
         }
     }
 
+    // 路由变化即时生效：空闲时供下次播放使用，播放中会按新路由续播。
+    LaunchedEffect(state.playbackRoute) {
+        playbackController.updateRoute(state.playbackRoute)
+    }
+
     val darkTheme = when (state.themeMode) {
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
@@ -127,6 +133,7 @@ fun ShineVoiceRoot(
                     onSelectProvider = viewModel::onSelectProvider,
                     providerLabel = viewModel::providerLabel,
                     onGenerate = viewModel::generate,
+                    onPlaybackRouteChanged = viewModel::onPlaybackRouteChanged,
                     onPlay = {
                         val source = state.lastResult?.audioFile?.let(::File)
                         if (source != null) playbackController.play(source)
@@ -203,6 +210,7 @@ private fun CreateScreen(
     onSelectProvider: (String) -> Unit,
     providerLabel: (String) -> String,
     onGenerate: () -> Unit,
+    onPlaybackRouteChanged: (PlaybackRoute) -> Unit,
     onPlay: () -> Unit,
     onSave: () -> Unit,
     onShare: () -> Unit,
@@ -307,6 +315,8 @@ private fun CreateScreen(
                 GenerationResultCard(
                     result = result,
                     providerLabel = providerLabel(result.providerId),
+                    playbackRoute = state.playbackRoute,
+                    onPlaybackRouteChanged = onPlaybackRouteChanged,
                     onPlay = onPlay,
                     onSave = onSave,
                     onShare = onShare,
@@ -326,6 +336,8 @@ private fun CreateScreen(
 private fun GenerationResultCard(
     result: TtsResult,
     providerLabel: String,
+    playbackRoute: PlaybackRoute,
+    onPlaybackRouteChanged: (PlaybackRoute) -> Unit,
     onPlay: () -> Unit,
     onSave: () -> Unit,
     onShare: () -> Unit,
@@ -341,6 +353,14 @@ private fun GenerationResultCard(
                     Button(onClick = onPlay) { Text("播放") }
                     Button(onClick = onSave) { Text("保存") }
                     Button(onClick = onShare) { Text("分享") }
+                }
+                OutlinedButton(onClick = {
+                    onPlaybackRouteChanged(
+                        if (playbackRoute == PlaybackRoute.EARPIECE) PlaybackRoute.SPEAKER
+                        else PlaybackRoute.EARPIECE,
+                    )
+                }) {
+                    Text("播放输出：${playbackRoute.displayName} · 点击切换听筒/外放")
                 }
             }
         }
@@ -547,6 +567,20 @@ private fun SettingsScreen(
                     )
                     Text("自动保存生成结果到本机", style = MaterialTheme.typography.bodyMedium)
                     Text("输出格式：WAV（16-bit 单声道 24 kHz）", style = MaterialTheme.typography.bodySmall)
+                    Text("播放输出", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PlaybackRoute.entries.forEach { route ->
+                            androidx.compose.material3.FilterChip(
+                                selected = state.playbackRoute == route,
+                                onClick = { viewModel.onPlaybackRouteChanged(route) },
+                                label = { Text(route.displayName) },
+                            )
+                        }
+                    }
+                    Text(
+                        "听筒模式借用通话音量（播放时按音量键调节），适合私密收听；外放模式插耳机时自动走耳机。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }

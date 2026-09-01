@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.shinevoice.core.audio.PlaybackRoute
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -27,6 +28,7 @@ class SettingsStore(private val context: Context) {
     private val systemTtsEngineKey = stringPreferencesKey("system_tts_engine")
     private val systemTtsVoiceKey = stringPreferencesKey("system_tts_voice")
     private val activeLocalModelKey = stringPreferencesKey("active_local_model")
+    private val playbackRouteKey = stringPreferencesKey("playback_route")
 
     val autoSave: Flow<Boolean> = context.shineVoiceDataStore.data.map { preferences ->
         preferences[autoSaveKey] ?: false
@@ -68,6 +70,17 @@ class SettingsStore(private val context: Context) {
         context.shineVoiceDataStore.edit { preferences ->
             if (voiceName.isNullOrBlank()) preferences.remove(systemTtsVoiceKey)
             else preferences[systemTtsVoiceKey] = voiceName
+        }
+    }
+
+    /** Selected playback output route; default SPEAKER. */
+    val playbackRoute: Flow<PlaybackRoute> = context.shineVoiceDataStore.data.map { preferences ->
+        PlaybackRoute.fromName(preferences[playbackRouteKey])
+    }
+
+    suspend fun setPlaybackRoute(route: PlaybackRoute) {
+        context.shineVoiceDataStore.edit { preferences ->
+            preferences[playbackRouteKey] = route.storedName
         }
     }
 
