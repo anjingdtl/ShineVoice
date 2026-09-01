@@ -152,6 +152,7 @@ private fun CreateScreen(
             )
         }
         item { ModelStatusCard(state) }
+        item { VoiceProfileCard(state) }
         item {
             OutlinedTextField(
                 value = state.targetText,
@@ -176,7 +177,8 @@ private fun CreateScreen(
             Button(
                 onClick = onGenerate,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !state.isGenerating && !state.stabilityRunning && state.modelStatus?.ready == true,
+                enabled = !state.isGenerating && !state.stabilityRunning &&
+                    state.modelStatus?.ready == true && state.referenceStatus?.ready == true,
             ) {
                 Text(if (state.isGenerating) "生成中…" else "生成语音")
             }
@@ -203,11 +205,22 @@ private fun ModelStatusCard(state: MainUiState) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("ZipVoice-Distill INT8", fontWeight = FontWeight.Bold)
-            val status = state.modelStatus
-            Text(status?.summary ?: "正在检查模型…")
-            if (status != null) {
-                Text("模型目录：${status.rootPath}", style = MaterialTheme.typography.bodySmall)
-                Text("参考音频：${status.referencePath}", style = MaterialTheme.typography.bodySmall)
+            Text(state.modelStatus?.summary ?: "正在检查模型…")
+            state.modelStatus?.rootPath?.let { path ->
+                Text("模型目录：$path", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceProfileCard(state: MainUiState) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("当前音色：默认参考音色", fontWeight = FontWeight.Bold)
+            Text(state.referenceStatus?.summary ?: "正在检查参考音频…")
+            state.referenceStatus?.referencePath?.let { path ->
+                Text("参考音频：$path", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -246,7 +259,7 @@ private fun VoicesScreen(state: MainUiState, padding: PaddingValues) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("默认参考音色", fontWeight = FontWeight.Bold)
                 Text("本地 ZipVoice")
-                Text("Phase 1 固定参考文件：${state.modelStatus?.referencePath ?: "尚未检测"}")
+                Text("Phase 1 固定参考文件：${state.referenceStatus?.referencePath ?: "尚未检测"}")
                 Text("完整 VoiceProfile 管理将在后续 Phase 实现。", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -317,7 +330,8 @@ private fun SettingsScreen(
                     Text("连续 20 次真实 Native ZipVoice 生成，串行执行并写入历史。")
                     Button(
                         onClick = onRunStability,
-                        enabled = state.modelStatus?.ready == true && !state.isGenerating && !state.stabilityRunning,
+                        enabled = state.modelStatus?.ready == true && state.referenceStatus?.ready == true &&
+                            !state.isGenerating && !state.stabilityRunning,
                     ) {
                         Text(if (state.stabilityRunning) "测试中 ${state.stabilityCompleted}/20" else "运行 20 次测试")
                     }

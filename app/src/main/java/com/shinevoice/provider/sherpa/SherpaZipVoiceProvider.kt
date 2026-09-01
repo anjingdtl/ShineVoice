@@ -12,6 +12,7 @@ import com.shinevoice.domain.tts.TtsProvider
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.domain.tts.TtsVoice
+import java.io.File
 import kotlinx.coroutines.CancellationException
 
 class SherpaZipVoiceProvider(
@@ -41,6 +42,8 @@ class SherpaZipVoiceProvider(
     )
 
     override suspend fun validateConfig(): ProviderResult {
+        // Model-only check: the default reference.wav and referenceText are
+        // validated by the VoiceProfile layer, not by the model status.
         val status = modelResolver.inspect()
         return if (status.ready) {
             ProviderResult.ok(status.summary)
@@ -49,10 +52,33 @@ class SherpaZipVoiceProvider(
                 TtsError(
                     TtsErrorCode.ModelNotInstalled,
                     status.summary,
-                    "root=${status.rootPath}; reference=${status.referencePath}",
+                    "root=${status.rootPath}",
                 ),
             )
         }
+    }
+
+    /** Validates a specific VoiceProfile's reference inputs before synthesis. */
+    fun validateReference(referenceAudioPath: String?, referenceText: String): ProviderResult {
+        val audio = referenceAudioPath?.let { File(it) }
+        if (audio == null || !audio.isFile) {
+            return ProviderResult.failure(
+                TtsError(
+                    TtsErrorCode.InvalidReferenceAudio,
+                    "参考音频缺失，请先在音色库中为当前音色准备录音或导入音频。",
+                    "path=$referenceAudioPath",
+                ),
+            )
+        }
+        if (referenceText.isBlank()) {
+            return ProviderResult.failure(
+                TtsError(
+                    TtsErrorCode.InvalidReferenceText,
+                    "参考文本（referenceText）为空，请填写与参考音频匹配的文字。",
+                ),
+            )
+        }
+        return ProviderResult.ok()
     }
 
     override suspend fun synthesize(request: TtsRequest): TtsResult {

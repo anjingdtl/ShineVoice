@@ -19,6 +19,7 @@ data class ZipVoiceModelLayout(
     val referenceAudio: File,
     val manifest: File,
 ) {
+    /** Model-only readiness: the default reference.wav is a VoiceProfile concern, not a model concern. */
     fun missingFiles(): List<String> = buildList {
         if (!encoder.isFile) add(encoder.name)
         if (!decoder.isFile) add(decoder.name)
@@ -26,7 +27,6 @@ data class ZipVoiceModelLayout(
         if (!tokens.isFile) add(tokens.name)
         if (!lexicon.isFile) add(lexicon.name)
         if (!dataDirectory.isDirectory) add("espeak-ng-data/")
-        if (referenceAudio.isFile.not()) add("reference.wav")
         if (!manifest.isFile) add("model-manifest.properties")
     }
 
@@ -46,16 +46,30 @@ data class ModelManifest(
 data class ZipVoiceModelStatus(
     val ready: Boolean,
     val rootPath: String,
-    val referencePath: String,
     val missingFiles: List<String>,
     val checksumVerified: Boolean = false,
     val manifest: ModelManifest? = null,
 ) {
     val summary: String
         get() = when {
-            ready -> "模型与参考音频已就绪（SHA-256 已校验）"
+            ready -> "模型已就绪（SHA-256 已校验）"
             missingFiles.isNotEmpty() -> "缺少或不完整：${missingFiles.joinToString()}"
             else -> "模型完整性校验失败"
+        }
+}
+
+/** Standalone VoiceProfile inputs: the reference audio file plus its transcript. */
+data class ReferenceAudioStatus(
+    val ready: Boolean,
+    val audioReady: Boolean,
+    val referenceTextReady: Boolean,
+    val referencePath: String,
+) {
+    val summary: String
+        get() = when {
+            !audioReady -> "缺少参考音频（reference.wav）"
+            !referenceTextReady -> "参考文本（referenceText）为空，需填写与音频匹配的文字"
+            else -> "参考音频与参考文本已就绪"
         }
 }
 
@@ -96,7 +110,6 @@ class ModelDirectoryResolver(context: Context) {
         val status = ZipVoiceModelStatus(
             ready = missing.isEmpty() && checksumVerified,
             rootPath = layout.root.absolutePath,
-            referencePath = layout.referenceAudio.absolutePath,
             missingFiles = missing,
             checksumVerified = checksumVerified,
             manifest = parsedManifest,
@@ -104,6 +117,14 @@ class ModelDirectoryResolver(context: Context) {
         cachedStatus = status
         return status
     }
+
+    /** Validates the VoiceProfile inputs (default reference audio + its transcript) independently of model status. */
+    fun referenceAudioStatus(referenceText: String): ReferenceAudioStatus = ReferenceAudioStatus(
+        audioReady = referenceAudio.isFile,
+        referenceTextReady = referenceText.isNotBlank(),
+        referencePath = referenceAudio.absolutePath,
+        ready = referenceAudio.isFile && referenceText.isNotBlank(),
+    )
 
     private fun readManifest(): ModelManifest? {
         if (!manifest.isFile) return null

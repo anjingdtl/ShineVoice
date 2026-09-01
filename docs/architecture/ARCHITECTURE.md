@@ -38,3 +38,7 @@ UI 不创建 Provider，不直接访问 JNI；Provider 以统一 `TtsRequest/Tts
 
 当前只注册真实可用的 `SherpaZipVoiceProvider`。`TtsProvider` 和 `VoiceCloneProvider` 已按方案定义，后续 System TTS/MiniMax 只需新增实现并注册，不把厂商条件分支散到页面或 ViewModel。
 
+## 模型状态与音色解耦
+
+`ModelDirectoryResolver.inspect()` 产生 `ZipVoiceModelStatus`，只检查模型文件与完整性校验和；默认 `reference.wav` 与 `referenceText` 属于音色（VoiceProfile）输入，由 `ModelDirectoryResolver.referenceAudioStatus(referenceText)` 单独校验为 `ReferenceAudioStatus`。两种状态独立显示、独立门控：模型缺失不会误报“参考音频问题”，反之亦然。`SherpaZipVoiceProvider.validateReference()` 在生成本对指定音色的参考音频与参考文本做前置校验。
+
