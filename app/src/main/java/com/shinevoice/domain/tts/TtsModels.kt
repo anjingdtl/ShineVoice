@@ -15,6 +15,7 @@ enum class TtsErrorCode {
     ApiServerError,
     GenerationTimeout,
     NativeRuntimeError,
+    SystemTtsError,
     StorageError,
     EmptyText,
     ProviderNotFound,

@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -141,6 +142,7 @@ fun ShineVoiceRoot(
                 AppPage.SETTINGS -> SettingsScreen(
                     state = state,
                     padding = padding,
+                    viewModel = viewModel,
                     onRefresh = viewModel::refreshModelAndInitialize,
                     onRunStability = viewModel::runTwentyGenerationStabilityTest,
                 )
@@ -277,15 +279,18 @@ private fun GenerationResultCard(
 private fun SettingsScreen(
     state: MainUiState,
     padding: PaddingValues,
+    viewModel: MainViewModel,
     onRefresh: () -> Unit,
     onRunStability: () -> Unit,
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { viewModel.loadMinimaxConfig() }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Text("设置 / Debug", style = MaterialTheme.typography.headlineSmall) }
+        item { Text("设置", style = MaterialTheme.typography.headlineSmall) }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -296,6 +301,51 @@ private fun SettingsScreen(
                     Button(onClick = onRefresh, enabled = !state.isGenerating && !state.stabilityRunning) {
                         Text("重新检测并加载")
                     }
+                }
+            }
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("云端高清（MiniMax）", fontWeight = FontWeight.Bold)
+                    Text("状态：${state.minimaxStatus}")
+                    OutlinedTextField(
+                        value = state.minimaxGroupId,
+                        onValueChange = viewModel::onMinimaxGroupIdChanged,
+                        label = { Text("Group ID") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = state.minimaxApiKey,
+                        onValueChange = viewModel::onMinimaxApiKeyChanged,
+                        label = { Text("API Key（加密存储，仅本机可见）") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            viewModel.saveMinimaxConfig { ok, msg ->
+                                Toast.makeText(
+                                    context,
+                                    if (ok) "云端连接正常。" else "云端保存/连接失败：$msg",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }) { Text("保存并测试连接") }
+                        OutlinedButton(onClick = viewModel::clearMinimaxConfig) { Text("清除配置") }
+                    }
+                    if (state.minimaxClonedVoices.isNotEmpty()) {
+                        Text("云端音色：${state.minimaxClonedVoices.joinToString { it.displayName }}")
+                    }
+                    Text(
+                        "API Key 使用 Android Keystore 加密保存，不会写入源码、日志或提交到 Git。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
@@ -326,7 +376,7 @@ private fun SettingsScreen(
         item {
             HorizontalDivider()
             Spacer(Modifier.height(2.dp))
-            Text("Phase 0/1 范围内：Android System TTS、MiniMax、ASR 和完整音色管理尚未实现。", style = MaterialTheme.typography.bodySmall)
+            Text("本地语音：ZipVoice · 系统语音：Android TTS · 云端：MiniMax（BYOK）", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

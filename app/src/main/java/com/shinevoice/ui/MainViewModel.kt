@@ -12,6 +12,7 @@ import com.shinevoice.data.db.GenerationHistoryEntity
 import com.shinevoice.data.db.VoiceProfileEntity
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
+import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,6 +65,11 @@ data class MainUiState(
     val historySelection: Set<String> = emptySet(),
     val nowPlayingTaskId: String? = null,
     val nowPlayingTitle: String? = null,
+    val minimaxGroupId: String = "",
+    val minimaxApiKey: String = "",
+    val minimaxStatus: String = "未配置",
+    val minimaxClonedVoices: List<com.shinevoice.domain.tts.TtsVoice> = emptyList(),
+    val cloudCloning: Boolean = false,
     val message: String? = null,
 )
 
@@ -344,6 +351,9 @@ class MainViewModel(
     private fun sherpaProvider(): SherpaZipVoiceProvider? =
         application.providerRegistry.get(SherpaZipVoiceProvider.PROVIDER_ID) as? SherpaZipVoiceProvider
 
+    private fun minimaxProvider(): MiniMaxProvider? =
+        application.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as? MiniMaxProvider
+
     fun toggleHistorySelect(taskId: String) {
         _uiState.update {
             val selection = it.historySelection.toMutableSet()
@@ -377,6 +387,122 @@ class MainViewModel(
 
     fun setNowPlaying(taskId: String?, title: String?) {
         _uiState.update { it.copy(nowPlayingTaskId = taskId, nowPlayingTitle = title) }
+    }
+
+    fun onMinimaxGroupIdChanged(value: String) {
+        _uiState.update { it.copy(minimaxGroupId = value) }
+    }
+
+    fun onMinimaxApiKeyChanged(value: String) {
+        _uiState.update { it.copy(minimaxApiKey = value) }
+    }
+
+    fun loadMinimaxConfig() {
+        viewModelScope.launch {
+            val groupId = application.minimaxConfig.groupId.first()
+            val apiKey = application.minimaxConfig.apiKey()
+            _uiState.update {
+                it.copy(
+                    minimaxGroupId = groupId ?: "",
+                    minimaxApiKey = apiKey ?: "",
+                    minimaxStatus = if (apiKey.isNullOrBlank()) "未配置" else "已配置",
+                )
+            }
+        }
+    }
+
+    fun saveMinimaxConfig(onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        val snapshot = _uiState.value
+        if (snapshot.minimaxGroupId.isBlank() || snapshot.minimaxApiKey.isBlank()) {
+            onDone(false, "请填写 Group ID 与 API Key。")
+            return
+        }
+        viewModelScope.launch {
+            application.minimaxConfig.save(snapshot.minimaxGroupId, snapshot.minimaxApiKey)
+            val provider = minimaxProvider()
+            val result = provider?.validateConfig() ?: run {
+                _uiState.update { it.copy(minimaxStatus = "Provider 未注册") }
+                return@launch
+            }
+            _uiState.update {
+                it.copy(
+                    minimaxStatus = if (result.success) "连接正常" else result.message,
+                    minimaxClonedVoices = emptyList(),
+                )
+            }
+            onDone(result.success, result.message)
+        }
+    }
+
+    fun testMinimaxConnection() {
+        loadMinimaxConfig()
+        viewModelScope.launch {
+            _uiState.update { it.copy(minimaxStatus = "连接中…") }
+            val provider = minimaxProvider()
+            val result = provider?.validateConfig()
+            _uiState.update {
+                it.copy(
+                    minimaxStatus = result?.takeIf { r -> r.success }?.message ?: "连接失败：${result?.message ?: "Provider 未注册"}",
+                )
+            }
+            if (result?.success == true) {
+                val voices = provider?.getVoices() ?: emptyList()
+                _uiState.update { it.copy(minimaxClonedVoices = voices) }
+            }
+        }
+    }
+
+    fun refreshMinimaxVoices() {
+        viewModelScope.launch {
+            val voices = minimaxProvider()?.getVoices() ?: emptyList()
+            _uiState.update { it.copy(minimaxClonedVoices = voices) }
+        }
+    }
+
+    fun clearMinimaxConfig() {
+        viewModelScope.launch {
+            application.minimaxConfig.clear()
+            _uiState.update {
+                it.copy(
+                    minimaxGroupId = "",
+                    minimaxApiKey = "",
+                    minimaxStatus = "未配置",
+                    minimaxClonedVoices = emptyList(),
+                )
+            }
+        }
+    }
+
+    /** Clones the given profile's reference audio to MiniMax and saves voice_id. */
+    fun cloneVoiceToCloud(profileId: String, onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val profile = application.voiceProfileManager.getById(profileId) ?: run {
+                onDone(false, "音色不存在。")
+                return@launch
+            }
+            val referencePath = profile.referenceAudioPath
+            if (referencePath == null) {
+                onDone(false, "该音色还没有参考音频，请先录音或导入。")
+                return@launch
+            }
+            _uiState.update { it.copy(cloudCloning = true) }
+            val provider = minimaxProvider()
+            val result = provider?.cloneVoice(
+                com.shinevoice.domain.tts.VoiceCloneRequest(
+                    voiceProfileId = profileId,
+                    referenceAudioPath = referencePath,
+                    referenceText = profile.referenceText ?: "",
+                ),
+            )
+            _uiState.update { it.copy(cloudCloning = false) }
+            if (result?.success == true && result.voiceId != null) {
+                application.voiceProfileManager.updateCloudBinding(profileId, result.voiceId!!)
+                application.voiceProfileManager.touch(profileId)
+                onDone(true, "云端音色已创建。")
+            } else {
+                onDone(false, result?.error?.userMessage ?: "云端克隆失败。")
+            }
+        }
     }
 
     private fun readMemoryPssKb(): Int? = runCatching {

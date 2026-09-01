@@ -188,6 +188,12 @@ fun VoicesScreen(
                         else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     },
                     onEditReferenceText = { viewModel.updateVoiceReferenceText(profile.id, it) },
+                    cloudCloning = state.cloudCloning,
+                    onCloneToCloud = {
+                        viewModel.cloneVoiceToCloud(profile.id) { ok, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    },
                 )
             }
         }
@@ -243,6 +249,8 @@ private fun VoiceProfileCard(
     onToggleRecord: () -> Unit,
     onImport: () -> Unit,
     onEditReferenceText: (String) -> Unit,
+    cloudCloning: Boolean,
+    onCloneToCloud: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -294,6 +302,11 @@ private fun VoiceProfileCard(
                     }
                     if (!profile.isDefault) {
                         OutlinedButton(onClick = onDelete) { Text("删除音色") }
+                    }
+                    if (profile.referenceAudioPath != null) {
+                        OutlinedButton(onClick = onCloneToCloud, enabled = !cloudCloning) {
+                            Text(if (cloudCloning) "云端克隆中…" else "克隆到云端（MiniMax）")
+                        }
                     }
                 }
             }

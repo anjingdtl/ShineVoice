@@ -96,6 +96,24 @@ class VoiceProfileManager(
         )
     }
 
+    suspend fun updateCloudBinding(id: String, minimaxVoiceId: String) {
+        val existing = dao.getById(id) ?: return
+        dao.insert(
+            existing.copy(minimaxVoiceId = minimaxVoiceId, updatedAt = System.currentTimeMillis()),
+        )
+    }
+
+    suspend fun updateSystemBinding(id: String, engine: String?, voiceId: String?) {
+        val existing = dao.getById(id) ?: return
+        dao.insert(
+            existing.copy(
+                androidTtsEngine = engine ?: existing.androidTtsEngine,
+                androidTtsVoice = voiceId ?: existing.androidTtsVoice,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
     suspend fun setCurrent(id: String) {
         dao.clearCurrent()
         dao.setCurrent(id, System.currentTimeMillis())

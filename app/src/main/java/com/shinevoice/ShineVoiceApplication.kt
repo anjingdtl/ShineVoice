@@ -9,10 +9,14 @@ import com.shinevoice.core.storage.ReferenceAudioLoader
 import com.shinevoice.core.storage.WavStorage
 import com.shinevoice.data.db.ShineVoiceDatabase
 import com.shinevoice.data.repository.RoomGenerationHistoryRepository
+import com.shinevoice.data.settings.MiniMaxConfig
 import com.shinevoice.data.settings.SettingsStore
 import com.shinevoice.domain.tts.ProviderRegistry
 import com.shinevoice.domain.tts.TtsManager
 import com.shinevoice.domain.voice.VoiceProfileManager
+import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
+import com.shinevoice.provider.minimax.MiniMaxApiClient
+import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaRuntimeManager
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +32,8 @@ class ShineVoiceApplication : Application() {
     val modelResolver by lazy { ModelDirectoryResolver(this) }
     val wavStorage by lazy { WavStorage(this) }
     val settingsStore by lazy { SettingsStore(this) }
+    val minimaxConfig by lazy { MiniMaxConfig(this) }
+    val minimaxApiClient by lazy { MiniMaxApiClient() }
     val audioImporter by lazy { ReferenceAudioImporter(this) }
     val database by lazy {
         Room.databaseBuilder(this, ShineVoiceDatabase::class.java, "shinevoice.db")
@@ -44,6 +50,10 @@ class ShineVoiceApplication : Application() {
     val ttsManager by lazy {
         val zipVoice = SherpaZipVoiceProvider(modelResolver, sherpaRuntime, wavStorage, logger)
         providerRegistry.register(zipVoice)
+        val systemTts = AndroidSystemTtsProvider(this, wavStorage, logger)
+        providerRegistry.register(systemTts)
+        val minimax = MiniMaxProvider(minimaxConfig, minimaxApiClient, wavStorage, logger)
+        providerRegistry.register(minimax)
         TtsManager(providerRegistry, historyRepository, logger)
     }
 
