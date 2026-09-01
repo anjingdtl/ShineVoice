@@ -24,4 +24,6 @@
 ## Act
 
 - CI 报错即修复重推。
+- 本轮收束：创作页/设置页的 `SegmentedButton`（该 material3 BOM 版本不可用）改为跨版本稳定的 `FilterChip`；分享回调内无效的 `return@let` 改为 if/else 结构；补充 `OutlinedButton` 导入。
+- 最终 CI（commit `535b044`）：`:app:testDebugUnitTest` 14 tests passed + `:app:assembleDebug` BUILD SUCCESSFUL；页面工程术语检查通过代码审查。
 - 待真机验收项：亮/暗/跟随系统三态切换生效且重启后保持；三种生成方式连续切换 20 次不 Crash；云端分享音频；创作页各按钮在三种模式下的可用性。

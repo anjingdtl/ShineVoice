@@ -24,4 +24,6 @@
 ## Act
 
 - CI 报错即修复重推。
+- 本轮收束：`MiniMaxApiClient` 修复 `parseSynthesisAudio(JSONObject→String)`、`continue` 出现在内联 lambda（改为 if 判断）、嵌套 `voice_id` 可空链；`MiniMaxProvider` 移除对 Kotlin 内部 `Result.Success/Failure` 的引用（改 `Result.fold`）、修正 `TtsResult.failure` 错误参数。
+- 最终 CI（commit `535b044`）：`:app:testDebugUnitTest` 14 tests passed + `:app:assembleDebug` BUILD SUCCESSFUL，含 MiniMax JSON 契约测试通过。
 - 待真机验收项：正确/错误 Key、无网络、超时、上传失败、clone 失败、TTS 失败、无效 voice_id、APP 重启后远程音色可用、连续生成。

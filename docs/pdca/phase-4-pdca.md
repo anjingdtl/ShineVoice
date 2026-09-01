@@ -20,4 +20,6 @@
 ## Act
 
 - CI 报错即修复重推。
+- 本轮收束：修复 `TextToSpeech` 初始化回调中 `client` 作用域、`getVoices()` 错误判断、`KEY_PARAM_PITCH/KEY_PARAM_SPEED` 常量（改为稳定的 `"pitch"/"rate"` Bundle 键）、补充 `UtteranceProgressListener.onError(String)` 抽象实现。
+- 最终 CI（`fix: MonoWavReader ...` 同轮，commit `535b044`）：`:app:testDebugUnitTest` 14 tests passed + `:app:assembleDebug` BUILD SUCCESSFUL，含本 Provider 编译与打包。
 - 真机验收前不伪造完成记录；生成链路是否可用由创作页 Provider 切换（Phase 6/7）统一评估。
