@@ -157,6 +157,9 @@ fun VoicesScreen(
                     profile = profile,
                     isCurrent = profile.id == state.currentVoice?.id,
                     expanded = profile.id == expandedId,
+                    systemEngines = state.systemEngines,
+                    systemSelectedEngine = state.systemSelectedEngine,
+                    systemSelectedVoice = state.systemSelectedVoice,
                     onExpand = { expandedId = if (expandedId == profile.id) null else profile.id },
                     onSetCurrent = { viewModel.setCurrentVoice(profile.id) },
                     onRename = { newName ->
@@ -195,6 +198,13 @@ fun VoicesScreen(
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     },
+                    onBindSystemVoice = {
+                        val engine = state.systemSelectedEngine
+                            ?: state.systemEngines.firstOrNull { it.isSystemDefault }?.packageName
+                        viewModel.bindProfileSystemVoice(profile.id, engine, state.systemSelectedVoice)
+                        Toast.makeText(context, "已把当前系统语音绑定到该音色。", Toast.LENGTH_SHORT).show()
+                    },
+                    onClearSystemBinding = { viewModel.clearProfileSystemBinding(profile.id) },
                 )
             }
         }
@@ -252,6 +262,9 @@ private fun VoiceProfileCard(
     profile: VoiceProfileEntity,
     isCurrent: Boolean,
     expanded: Boolean,
+    systemEngines: List<com.shinevoice.provider.androidtts.SystemEngineInfo>,
+    systemSelectedEngine: String?,
+    systemSelectedVoice: String?,
     onExpand: () -> Unit,
     onSetCurrent: () -> Unit,
     onRename: (String) -> Unit,
@@ -263,6 +276,8 @@ private fun VoiceProfileCard(
     onEditReferenceText: (String) -> Unit,
     cloudCloning: Boolean,
     onCloneToCloud: () -> Unit,
+    onBindSystemVoice: () -> Unit,
+    onClearSystemBinding: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -301,6 +316,27 @@ private fun VoiceProfileCard(
                         }
                         OutlinedButton(onClick = onImport) { Text("导入音频") }
                         OutlinedButton(onClick = { onRename(profile.displayName) }) { Text("重命名") }
+                    }
+                    HorizontalDivider()
+                    Text("系统语音绑定", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        if (profile.hasSystemBinding) {
+                            val engineLabel = systemEngines.firstOrNull { it.packageName == profile.androidTtsEngine }?.label
+                                ?: profile.androidTtsEngine.orEmpty()
+                            "已绑定：$engineLabel · ${profile.androidTtsVoice ?: "默认语音"}"
+                        } else {
+                            "未绑定系统语音"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onBindSystemVoice,
+                            enabled = systemEngines.isNotEmpty(),
+                        ) { Text("绑定当前系统语音") }
+                        if (profile.hasSystemBinding) {
+                            OutlinedButton(onClick = onClearSystemBinding) { Text("解除绑定") }
+                        }
                     }
                     OutlinedTextField(
                         value = profile.referenceText ?: "",

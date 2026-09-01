@@ -44,13 +44,16 @@ class ShineVoiceApplication : Application() {
     val historyRepository by lazy { RoomGenerationHistoryRepository(database.generationHistoryDao()) }
     val voiceProfileManager by lazy { VoiceProfileManager(database.voiceProfileDao(), this) }
     val providerRegistry by lazy { ProviderRegistry(logger) }
+    val localModelRegistry by lazy {
+        com.shinevoice.domain.model.LocalModelRegistry(this, modelResolver, settingsStore)
+    }
     val sherpaRuntime by lazy {
         SherpaRuntimeManager(modelResolver, ReferenceAudioLoader(), logger)
     }
     val ttsManager by lazy {
         val zipVoice = SherpaZipVoiceProvider(modelResolver, sherpaRuntime, wavStorage, logger)
         providerRegistry.register(zipVoice)
-        val systemTts = AndroidSystemTtsProvider(this, wavStorage, logger)
+        val systemTts = AndroidSystemTtsProvider(this, wavStorage, logger, settingsStore)
         providerRegistry.register(systemTts)
         val minimax = MiniMaxProvider(minimaxConfig, minimaxApiClient, wavStorage, logger)
         providerRegistry.register(minimax)

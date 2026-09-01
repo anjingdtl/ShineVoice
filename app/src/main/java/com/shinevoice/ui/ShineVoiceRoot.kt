@@ -358,9 +358,12 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val application = context.applicationContext as ShineVoiceApplication
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showImportModelHint by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         viewModel.loadMinimaxConfig()
         viewModel.refreshStorageStats()
+        viewModel.loadSystemTtsState()
+        viewModel.refreshLocalModels()
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -375,16 +378,42 @@ private fun SettingsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("本地模型", fontWeight = FontWeight.Medium)
-                    Text(
-                        when {
-                            state.modelStatus?.ready == true -> "本地模型已就绪，可离线生成"
-                            state.modelStatus?.missingFiles?.isNotEmpty() == true ->
-                                "本地模型未安装完整：${state.modelStatus.missingFiles.joinToString()}"
-                            else -> "正在检查本地模型…"
-                        },
-                    )
-                    Button(onClick = onRefresh, enabled = !state.isGenerating && !state.stabilityRunning) {
-                        Text("重新检测")
+                    if (state.localModels.isEmpty()) {
+                        Text("正在检查本地模型…")
+                    } else {
+                        state.localModels.forEach { model ->
+                            Row(
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = model.active,
+                                    onClick = { viewModel.selectLocalModel(model.id) },
+                                    enabled = model.installed,
+                                )
+                                Column {
+                                    Text(model.displayName, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        when {
+                                            model.installed -> "已安装 · ${model.statusSummary}"
+                                            else -> "未安装 · ${model.statusSummary}"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (model.installed) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            MaterialTheme.colorScheme.error
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = viewModel::redetectEverything, enabled = !state.isGenerating && !state.stabilityRunning) {
+                            Text("重新检测")
+                        }
+                        OutlinedButton(onClick = { showImportModelHint = true }) { Text("添加模型") }
                     }
                     Text("云端高清", fontWeight = FontWeight.Medium)
                     Text("状态：${state.minimaxStatus}")
@@ -434,7 +463,48 @@ private fun SettingsScreen(
                     }
                     HorizontalDivider()
                     Text("系统语音", fontWeight = FontWeight.Medium)
-                    Text("使用设备自带的中文语音引擎朗读，支持语速调节。", style = MaterialTheme.typography.bodyMedium)
+                    Text("状态：${state.systemStatus.ifBlank { "未检测" }}")
+                    if (state.systemEngines.isNotEmpty()) {
+                        Text("语音引擎", style = MaterialTheme.typography.labelMedium)
+                        state.systemEngines.forEach { engine ->
+                            Row(
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = state.systemSelectedEngine == engine.packageName ||
+                                        (state.systemSelectedEngine == null && engine.isSystemDefault),
+                                    onClick = { viewModel.selectSystemEngine(engine.packageName) },
+                                )
+                                Column {
+                                    Text(
+                                        engine.label + if (engine.isSystemDefault) "（系统默认）" else "",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (state.systemVoices.isNotEmpty()) {
+                        Text("中文语音（${state.systemVoices.size} 个）", style = MaterialTheme.typography.labelMedium)
+                        state.systemVoices.take(8).forEach { voice ->
+                            Row(
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = state.systemSelectedVoice == voice.id,
+                                    onClick = { viewModel.selectSystemVoice(voice.id) },
+                                )
+                                Text(voice.displayName, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        Text(
+                            "未指定语音时使用引擎默认语音",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text("在音色库中可为每个音色绑定系统语音。", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -551,6 +621,34 @@ private fun SettingsScreen(
                                 Text("失败任务：${summary.failedTasks.joinToString()}")
                             }
                         }
+                        HorizontalDivider()
+                        Text("日志（最近 ${state.recentLogs.size} 条）", fontWeight = FontWeight.Medium)
+                        OutlinedButton(onClick = viewModel::refreshRecentLogs) { Text("刷新日志") }
+                        state.recentLogs.takeLast(12).forEach { line ->
+                            Text(line, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val logs = application.logger.recentLogs().joinToString("\n")
+                                val diagnostic = buildString {
+                                    appendLine("ShineVoice 诊断信息（${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(java.util.Date())}）")
+                                    appendLine("生成引擎状态：")
+                                    application.providerRegistry.snapshots().forEach { appendLine("  ${it.displayName}=${it.state.name}") }
+                                    appendLine("本地模型：${state.localModels.joinToString { it.displayName + if (it.installed) "(已安装)" else "(未安装)" }}")
+                                    appendLine("---- 日志 ----")
+                                    append(logs)
+                                }
+                                runCatching {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, diagnostic)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "导出诊断信息"))
+                                }.onFailure {
+                                    Toast.makeText(context, "导出失败：${it.message}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                        ) { Text("导出诊断信息") }
                         Text("以上为工程运行数据，普通用户无需关注。", style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -568,6 +666,26 @@ private fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showImportModelHint) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showImportModelHint = false },
+            title = { Text("添加本地模型") },
+            text = {
+                Text(
+                    "当前版本内置 ZipVoice 中文声音克隆模型目录的检测。新模型需要先放到手机存储的应用专属目录 " +
+                        "Android/data/com.shinevoice.debug/files/models/ 下，然后回到本页点击「重新检测」。模型文件较大，" +
+                        "不通过应用内下载（后续版本提供）。",
+                )
+            },
+            confirmButton = {
+                Button(onClick = { showImportModelHint = false; viewModel.redetectEverything() }) { Text("去重新检测") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showImportModelHint = false }) { Text("知道了") }
+            },
+        )
     }
 }
 

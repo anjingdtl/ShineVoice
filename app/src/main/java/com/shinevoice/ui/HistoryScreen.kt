@@ -60,6 +60,7 @@ fun HistoryScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectMode by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     var expandedDates by remember { mutableStateOf(emptySet<String>()) }
     val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
     val groups = remember(state.history) { groupByDate(state.history) }
@@ -168,7 +169,7 @@ fun HistoryScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = viewModel::deleteSelectedHistory, enabled = count > 0) {
+                OutlinedButton(onClick = { confirmDelete = true }, enabled = count > 0) {
                     Text("删除选中（$count）")
                 }
                 OutlinedButton(onClick = ::shareSelected, enabled = count > 0) {
@@ -232,6 +233,27 @@ fun HistoryScreen(
                 },
             )
         }
+    }
+
+    if (confirmDelete) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除生成记录") },
+            text = {
+                Text(
+                    "将删除选中的 ${state.historySelection.size} 条记录及其音频文件，删除后无法恢复。确定删除吗？",
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(onClick = {
+                    confirmDelete = false
+                    viewModel.deleteSelectedHistory()
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
     }
 }
 

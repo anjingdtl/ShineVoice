@@ -96,6 +96,13 @@ data class MainUiState(
     val minimaxStatus: String = "未配置",
     val minimaxClonedVoices: List<com.shinevoice.domain.tts.TtsVoice> = emptyList(),
     val cloudCloning: Boolean = false,
+    val systemEngines: List<com.shinevoice.provider.androidtts.SystemEngineInfo> = emptyList(),
+    val systemSelectedEngine: String? = null,
+    val systemVoices: List<com.shinevoice.domain.tts.TtsVoice> = emptyList(),
+    val systemSelectedVoice: String? = null,
+    val systemStatus: String = "",
+    val localModels: List<com.shinevoice.domain.model.ModelProfile> = emptyList(),
+    val recentLogs: List<String> = emptyList(),
     val selectedProviderId: String = SherpaZipVoiceProvider.PROVIDER_ID,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val autoSave: Boolean = false,
@@ -316,6 +323,41 @@ class MainViewModel(
         }
     }
 
+    /** Loads the local model catalog with live install/active state. */
+    fun refreshLocalModels() {
+        viewModelScope.launch {
+            val models = withContext(Dispatchers.IO) { application.localModelRegistry.availableModels() }
+            _uiState.update { it.copy(localModels = models) }
+        }
+    }
+
+    fun selectLocalModel(modelId: String) {
+        viewModelScope.launch {
+            val ok = application.localModelRegistry.selectModel(modelId)
+            _uiState.update {
+                it.copy(
+                    message = if (ok) "已切换本地模型。" else "该模型未安装或不可用。",
+                )
+            }
+            refreshLocalModels()
+        }
+    }
+
+    /** Full re-detect: model checksums, storage stats, diagnostics logs. */
+    fun redetectEverything() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { application.localModelRegistry.reinspect() }
+            refreshModelAndInitialize()
+            refreshLocalModels()
+            refreshStorageStats()
+            _uiState.update { it.copy(recentLogs = application.logger.recentLogs()) }
+        }
+    }
+
+    fun refreshRecentLogs() {
+        _uiState.update { it.copy(recentLogs = application.logger.recentLogs()) }
+    }
+
     private fun dirSize(dir: java.io.File): Long {
         if (!dir.isDirectory) return 0L
         return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
@@ -445,9 +487,12 @@ class MainViewModel(
                 text = state.targetText.trim(),
                 providerId = AndroidSystemTtsProvider.PROVIDER_ID,
                 voiceProfileId = voice?.id,
-                voiceId = voice?.androidTtsVoice,
+                voiceId = voice?.androidTtsVoice ?: state.systemSelectedVoice,
                 speed = state.speed,
                 pitch = 1.0f,
+                extra = voice?.androidTtsEngine?.takeIf { it.isNotBlank() }
+                    ?.let { mapOf(AndroidSystemTtsProvider.EXTRA_ENGINE to it) }
+                    ?: emptyMap(),
             )
             else -> TtsRequest(
                 taskId = UUID.randomUUID().toString(),
@@ -472,6 +517,94 @@ class MainViewModel(
 
     private fun minimaxProvider(): MiniMaxProvider? =
         application.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as? MiniMaxProvider
+
+    private fun systemTtsProvider(): com.shinevoice.provider.androidtts.AndroidSystemTtsProvider? =
+        application.providerRegistry.get(AndroidSystemTtsProvider.PROVIDER_ID)
+            as? com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
+
+    /** Loads installed TTS engines, the persisted choice, and its Chinese voices. */
+    fun loadSystemTtsState() {
+        viewModelScope.launch {
+            val engines = systemTtsProvider()?.availableEngines() ?: emptyList()
+            val selected = application.settingsStore.systemTtsEngine.first()
+            _uiState.update {
+                it.copy(
+                    systemEngines = engines,
+                    systemSelectedEngine = selected,
+                    systemStatus = engines.summarizeEngines(selected),
+                )
+            }
+            refreshSystemVoices(selected)
+        }
+    }
+
+    /** Switches the system engine, persists it, refreshes its voice list. */
+    fun selectSystemEngine(enginePackage: String?) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(systemStatus = "正在切换系统语音引擎…") }
+            val result = systemTtsProvider()?.switchEngine(enginePackage)
+                ?: return@launch _uiState.update { it.copy(systemStatus = "系统语音不可用") }
+            _uiState.update {
+                it.copy(
+                    systemSelectedEngine = enginePackage,
+                    systemStatus = result.message,
+                    systemVoices = emptyList(),
+                    systemSelectedVoice = null,
+                )
+            }
+            application.settingsStore.setSystemTtsVoice(null)
+            refreshSystemVoices(enginePackage)
+        }
+    }
+
+    fun selectSystemVoice(voiceName: String) {
+        viewModelScope.launch {
+            application.settingsStore.setSystemTtsVoice(voiceName)
+            _uiState.update { it.copy(systemSelectedVoice = voiceName) }
+        }
+    }
+
+    private suspend fun refreshSystemVoices(enginePackage: String?) {
+        val voices = systemTtsProvider()?.getVoices() ?: emptyList()
+        val persisted = application.settingsStore.systemTtsVoice.first()
+        _uiState.update {
+            it.copy(
+                systemVoices = voices,
+                systemSelectedVoice = persisted?.takeIf { v -> voices.any { it.id == v } },
+                systemStatus = it.systemStatus.ifBlank {
+                    "已就绪（${voices.size} 个中文语音）"
+                },
+            )
+        }
+        // enginePackage is intentionally the source of this refresh; kept for logs.
+        application.logger.i("SystemTTS voices loaded engine=${enginePackage ?: "default"} count=${voices.size}")
+    }
+
+    /** Binds a system engine + voice to a voice profile (系统 Binding). */
+    fun bindProfileSystemVoice(profileId: String, engine: String?, voiceName: String?) {
+        viewModelScope.launch {
+            application.voiceProfileManager.updateSystemBinding(profileId, engine, voiceName)
+            application.voiceProfileManager.touch(profileId)
+            _uiState.update { it.copy(message = "系统语音绑定已保存。") }
+        }
+    }
+
+    fun clearProfileSystemBinding(profileId: String) {
+        viewModelScope.launch {
+            application.voiceProfileManager.clearSystemBinding(profileId)
+            _uiState.update { it.copy(message = "系统语音绑定已解除。") }
+        }
+    }
+
+    private fun List<com.shinevoice.provider.androidtts.SystemEngineInfo>.summarizeEngines(
+        selected: String?,
+    ): String = when {
+        isEmpty() -> "未找到系统语音引擎"
+        else -> {
+            val name = firstOrNull { it.packageName == selected }?.label ?: "系统默认引擎"
+            "已选择：$name"
+        }
+    }
 
     fun toggleHistorySelect(taskId: String) {
         _uiState.update {

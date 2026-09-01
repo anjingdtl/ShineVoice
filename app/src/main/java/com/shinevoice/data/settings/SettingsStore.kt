@@ -24,6 +24,9 @@ enum class ThemeMode(val storedName: String) {
 class SettingsStore(private val context: Context) {
     private val autoSaveKey = booleanPreferencesKey("auto_save_generated_audio")
     private val themeModeKey = stringPreferencesKey("theme_mode")
+    private val systemTtsEngineKey = stringPreferencesKey("system_tts_engine")
+    private val systemTtsVoiceKey = stringPreferencesKey("system_tts_voice")
+    private val activeLocalModelKey = stringPreferencesKey("active_local_model")
 
     val autoSave: Flow<Boolean> = context.shineVoiceDataStore.data.map { preferences ->
         preferences[autoSaveKey] ?: false
@@ -31,6 +34,15 @@ class SettingsStore(private val context: Context) {
 
     val themeMode: Flow<ThemeMode> = context.shineVoiceDataStore.data.map { preferences ->
         ThemeMode.fromName(preferences[themeModeKey])
+    }
+
+    /** Selected Android System TTS engine package; null = system default engine. */
+    val systemTtsEngine: Flow<String?> = context.shineVoiceDataStore.data.map { preferences ->
+        preferences[systemTtsEngineKey]?.takeIf { it.isNotBlank() }
+    }
+
+    val systemTtsVoice: Flow<String?> = context.shineVoiceDataStore.data.map { preferences ->
+        preferences[systemTtsVoiceKey]?.takeIf { it.isNotBlank() }
     }
 
     suspend fun setAutoSave(enabled: Boolean) {
@@ -42,6 +54,31 @@ class SettingsStore(private val context: Context) {
     suspend fun setThemeMode(mode: ThemeMode) {
         context.shineVoiceDataStore.edit { preferences ->
             preferences[themeModeKey] = mode.storedName
+        }
+    }
+
+    suspend fun setSystemTtsEngine(enginePackage: String?) {
+        context.shineVoiceDataStore.edit { preferences ->
+            if (enginePackage.isNullOrBlank()) preferences.remove(systemTtsEngineKey)
+            else preferences[systemTtsEngineKey] = enginePackage
+        }
+    }
+
+    suspend fun setSystemTtsVoice(voiceName: String?) {
+        context.shineVoiceDataStore.edit { preferences ->
+            if (voiceName.isNullOrBlank()) preferences.remove(systemTtsVoiceKey)
+            else preferences[systemTtsVoiceKey] = voiceName
+        }
+    }
+
+    /** Active local model id (LocalModelRegistry); null = catalog default. */
+    val activeLocalModel: Flow<String?> = context.shineVoiceDataStore.data.map { preferences ->
+        preferences[activeLocalModelKey]?.takeIf { it.isNotBlank() }
+    }
+
+    suspend fun setActiveLocalModel(modelId: String) {
+        context.shineVoiceDataStore.edit { preferences ->
+            preferences[activeLocalModelKey] = modelId
         }
     }
 }

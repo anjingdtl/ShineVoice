@@ -134,6 +134,18 @@ class VoiceProfileManager(
         )
     }
 
+    /** Removes only the system binding; local/cloud bindings are untouched. */
+    suspend fun clearSystemBinding(id: String) {
+        val existing = dao.getById(id) ?: return
+        dao.insert(
+            existing.copy(
+                androidTtsEngine = null,
+                androidTtsVoice = null,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
     suspend fun setCurrent(id: String) {
         dao.clearCurrent()
         dao.setCurrent(id, System.currentTimeMillis())
