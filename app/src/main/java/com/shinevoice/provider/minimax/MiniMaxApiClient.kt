@@ -141,7 +141,7 @@ class MiniMaxApiClient(
             response.use {
                 if (!it.isSuccessful) throw mapHttpError(it.code)
                 val json = JSONObject(it.body?.string() ?: "{}")
-                val audioBase64 = parseSynthesisAudio(json)
+                val audioBase64 = parseSynthesisAudio(json.toString())
                 outputFile.parentFile?.mkdirs()
                 val bytes = java.util.Base64.getDecoder().decode(audioBase64)
                 outputFile.writeBytes(bytes)
@@ -188,7 +188,8 @@ class MiniMaxApiClient(
                 if (list != null) {
                     for (i in 0 until list.length()) {
                         val item = list.getJSONObject(i)
-                        val voiceId = item.optString("voice_id").ifBlank { continue }
+                        val voiceId = item.optString("voice_id")
+                        if (voiceId.isBlank()) continue
                         add(ClonedVoice(voiceId, item.optString("voice_name").ifBlank { voiceId }))
                     }
                 }
@@ -198,8 +199,9 @@ class MiniMaxApiClient(
         /** Pure JSON contract parser for POST /v1/voice_clone. */
         internal fun parseCloneVoiceId(jsonText: String): String {
             val json = JSONObject(jsonText)
+            val nested = json.optJSONObject("data")?.optString("voice_id").orEmpty()
             return json.optString("voice_id")
-                .ifBlank { json.optJSONObject("data")?.optString("voice_id") }
+                .ifBlank { nested }
                 .ifBlank {
                     throw mapApiError(json, "云端克隆未返回 voice_id")
                 }

@@ -78,13 +78,15 @@ class MiniMaxProvider(
                 ),
             )
         }
-        return when (val result = apiClient.testConnection(key, groupId)) {
-            is Result.Success -> ProviderResult.ok("云端连接正常")
-            is Result.Failure -> ProviderResult.failure(
-                (result.exceptionOrNull() as? MiniMaxException)?.error
-                    ?: TtsError(TtsErrorCode.Unknown, "云端连接测试失败。"),
-            )
-        }
+        return apiClient.testConnection(key, groupId).fold(
+            onSuccess = { ProviderResult.ok("云端连接正常") },
+            onFailure = { error ->
+                ProviderResult.failure(
+                    (error as? MiniMaxException)?.error
+                        ?: TtsError(TtsErrorCode.Unknown, "云端连接测试失败。"),
+                )
+            },
+        )
     }
 
     override suspend fun synthesize(request: TtsRequest): TtsResult {
@@ -118,7 +120,14 @@ class MiniMaxProvider(
                         )
                     },
                     onFailure = { error ->
-                        failure(request, startedAt, (error as? MiniMaxException)?.error ?: TtsError(TtsErrorCode.ApiServerError, "云端生成失败。"))
+                        val ttsError = (error as? MiniMaxException)?.error
+                            ?: TtsError(TtsErrorCode.ApiServerError, "云端生成失败。")
+                        TtsResult.failure(
+                            taskId = request.taskId,
+                            providerId = id,
+                            elapsedMs = elapsedSince(startedAt),
+                            error = ttsError,
+                        )
                     },
                 )
         } catch (throwable: Throwable) {

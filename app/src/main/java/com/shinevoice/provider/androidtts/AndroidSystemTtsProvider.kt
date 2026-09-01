@@ -52,11 +52,17 @@ class AndroidSystemTtsProvider(
                 return@TextToSpeech
             }
             if (status == TextToSpeech.SUCCESS) {
-                tts = client
-                selectChineseVoice(client)
-                cont.resume(ProviderResult.ok("系统语音已就绪"))
+                created?.let { ready ->
+                    tts = ready
+                    selectChineseVoice(ready)
+                    cont.resume(ProviderResult.ok("系统语音已就绪"))
+                } ?: cont.resume(
+                    ProviderResult.failure(
+                        TtsError(TtsErrorCode.SystemTtsError, "系统语音初始化异常。"),
+                    ),
+                )
             } else {
-                runCatching { client.shutdown() }
+                runCatching { created?.shutdown() }
                 cont.resume(
                     ProviderResult.failure(
                         TtsError(
@@ -107,10 +113,10 @@ class AndroidSystemTtsProvider(
     )
 
     override suspend fun getVoices(): List<TtsVoice> {
-        val engine = tts ?: run {
-            initialize()
+        if (tts == null) {
+            val init = initialize()
+            if (!init.success) return emptyList()
         }
-        if (!engine.success) return emptyList()
         return runCatching {
             (tts?.voices ?: emptyList())
                 .filter { voice ->
@@ -156,13 +162,22 @@ class AndroidSystemTtsProvider(
 
         val output = wavStorage.generatedFile(request.taskId)
         val params = Bundle().apply {
-            putFloat(TextToSpeech.Engine.KEY_PARAM_PITCH, request.pitch.coerceIn(0.5f, 2.0f))
-            putFloat(TextToSpeech.Engine.KEY_PARAM_SPEED, request.speed.coerceIn(0.5f, 2.0f))
+            putFloat(android.speech.tts.Engine.KEY_PARAM_PITCH, request.pitch.coerceIn(0.5f, 2.0f))
+            putFloat(android.speech.tts.Engine.KEY_PARAM_RATE, request.speed.coerceIn(0.5f, 2.0f))
         }
 
         return suspendCancellableCoroutine { cont ->
             val listener = object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
+
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    if (utteranceId == request.taskId && cont.isActive) {
+                        cont.resume(
+                            failure(request, startedAt, TtsErrorCode.SystemTtsError, "系统语音朗读失败。"),
+                        )
+                    }
+                }
 
                 override fun onDone(utteranceId: String?) {
                     if (utteranceId == request.taskId && cont.isActive) {
