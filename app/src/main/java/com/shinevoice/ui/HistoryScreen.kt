@@ -9,19 +9,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,11 +32,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.storage.AudioExporter
 import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.db.GenerationHistoryEntity
+import com.shinevoice.ui.cyber.CyberButton
+import com.shinevoice.ui.cyber.CyberCard
+import com.shinevoice.ui.cyber.CyberChipState
+import com.shinevoice.ui.cyber.CyberDialog
+import com.shinevoice.ui.cyber.CyberOutlinedButton
+import com.shinevoice.ui.cyber.CyberPageHeader
+import com.shinevoice.ui.cyber.CyberType
+import com.shinevoice.ui.cyber.LocalCyberColors
+import com.shinevoice.ui.cyber.PulsingDot
+import com.shinevoice.ui.cyber.formatDurationClock
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -49,6 +56,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * 历史页：Audio Archive / 语音档案记录（UI Phase E）。
+ *
+ * Date groups fold like archive drawers; rows are playback-ready dossiers.
+ * Multi-select mode shows SELECTED: NN and batch delete/share/ZIP with a
+ * mandatory confirmation before deletion.
+ */
 @Composable
 fun HistoryScreen(
     state: MainUiState,
@@ -59,6 +73,7 @@ fun HistoryScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val colors = LocalCyberColors.current
     var selectMode by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var expandedDates by remember { mutableStateOf(emptySet<String>()) }
@@ -148,38 +163,56 @@ fun HistoryScreen(
 
     Column(modifier = Modifier.fillMaxSize().padding(padding)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("生成历史", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            if (selectMode) {
-                OutlinedButton(onClick = {
-                    viewModel.setHistorySelectAll(true)
-                }) { Text("全选") }
-                OutlinedButton(onClick = { selectMode = false; viewModel.exitHistorySelection() }) {
-                    Text("完成")
-                }
-            } else {
-                Button(onClick = { selectMode = true }) { Text("选择") }
-            }
+            CyberPageHeader(
+                title = "AUDIO ARCHIVE",
+                code = "语音档案记录",
+                modifier = Modifier.weight(1f),
+                trailing = {
+                    if (selectMode) {
+                        CyberOutlinedButton(text = "完成", onClick = {
+                            selectMode = false
+                            viewModel.exitHistorySelection()
+                        })
+                    } else {
+                        CyberOutlinedButton(text = "选择", onClick = { selectMode = true })
+                    }
+                },
+            )
         }
+
         if (selectMode) {
-            val count = state.historySelection.size
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = { confirmDelete = true }, enabled = count > 0) {
-                    Text("删除选中（$count）")
-                }
-                OutlinedButton(onClick = ::shareSelected, enabled = count > 0) {
-                    Text("分享选中")
-                }
-                OutlinedButton(onClick = ::exportSelectedAsZip, enabled = count > 0) {
-                    Text("导出 ZIP")
-                }
+                Text(
+                    "SELECTED: %02d".format(state.historySelection.size),
+                    style = CyberType.terminalValue,
+                    color = colors.accent,
+                )
+                Spacer(Modifier.weight(1f))
+                CyberOutlinedButton(text = "全选", onClick = { viewModel.setHistorySelectAll(true) })
+                CyberOutlinedButton(
+                    text = "删除",
+                    onClick = { confirmDelete = true },
+                    enabled = state.historySelection.isNotEmpty(),
+                    tint = colors.danger,
+                )
+                CyberOutlinedButton(
+                    text = "分享",
+                    onClick = ::shareSelected,
+                    enabled = state.historySelection.isNotEmpty(),
+                )
+                CyberOutlinedButton(
+                    text = "ZIP",
+                    onClick = ::exportSelectedAsZip,
+                    enabled = state.historySelection.isNotEmpty(),
+                )
             }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
         }
 
         LazyColumn(
@@ -188,11 +221,15 @@ fun HistoryScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (state.history.isEmpty()) {
-                item { Text("还没有生成记录，去创作页生成一段语音吧。") }
+                item {
+                    CyberCard {
+                        Text("还没有生成记录，去创作页生成一段语音吧。", color = colors.textMuted, fontSize = 13.sp)
+                    }
+                }
             } else {
                 groups.forEach { (dateKey, items) ->
                     item(key = "header-$dateKey") {
-                        DateSectionHeader(
+                        ArchiveDateHeader(
                             title = dateTitle(dateKey),
                             expanded = dateKey in expandedDates,
                             count = items.size,
@@ -207,7 +244,7 @@ fun HistoryScreen(
                     }
                     if (dateKey in expandedDates) {
                         items(items, key = { it.taskId }) { item ->
-                            HistoryRow(
+                            ArchiveRow(
                                 item = item,
                                 selectMode = selectMode,
                                 selected = item.taskId in state.historySelection,
@@ -236,24 +273,28 @@ fun HistoryScreen(
     }
 
     if (confirmDelete) {
-        androidx.compose.material3.AlertDialog(
+        CyberDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除生成记录") },
-            text = {
-                Text(
-                    "将删除选中的 ${state.historySelection.size} 条记录及其音频文件，删除后无法恢复。确定删除吗？",
+            title = "删除生成记录",
+            code = "DELETE RECORDS",
+            actions = {
+                CyberOutlinedButton(text = "取消", onClick = { confirmDelete = false })
+                CyberButton(
+                    text = "删除",
+                    onClick = {
+                        confirmDelete = false
+                        viewModel.deleteSelectedHistory()
+                        selectMode = false
+                    },
                 )
             },
-            confirmButton = {
-                androidx.compose.material3.Button(onClick = {
-                    confirmDelete = false
-                    viewModel.deleteSelectedHistory()
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { confirmDelete = false }) { Text("取消") }
-            },
-        )
+        ) {
+            Text(
+                "将删除选中的 ${state.historySelection.size} 条记录及其音频文件，删除后无法恢复。确定删除吗？",
+                fontSize = 13.sp,
+                color = colors.textPrimary,
+            )
+        }
     }
 }
 
@@ -271,8 +312,8 @@ private fun dateTitle(dateKey: String): String {
     val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
     val yesterday = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(System.currentTimeMillis() - 86400000L))
     return when (dateKey) {
-        today -> "今天"
-        yesterday -> "昨天"
+        today -> "TODAY"
+        yesterday -> "YESTERDAY"
         else -> {
             val date = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).parse(dateKey) ?: return dateKey
             val sameYear = SimpleDateFormat("yyyy", Locale.CHINA).format(date) ==
@@ -282,34 +323,44 @@ private fun dateTitle(dateKey: String): String {
     }
 }
 
+/** Archive drawer header: `TODAY // 12 ▾` in terminal mono. */
 @Composable
-private fun DateSectionHeader(
+private fun ArchiveDateHeader(
     title: String,
     expanded: Boolean,
     count: Int,
     onToggle: () -> Unit,
 ) {
-    Surface(
-        onClick = onToggle,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth(),
+    val colors = LocalCyberColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                if (expanded) "▾ " else "▸ ",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text("$title", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text("$count 条", style = MaterialTheme.typography.bodySmall)
-        }
+        Text(
+            title,
+            style = CyberType.sectionCode,
+            color = colors.cyan,
+        )
+        Spacer(Modifier.padding(4.dp))
+        Text(
+            "// %02d".format(count),
+            style = CyberType.sectionCode,
+            color = colors.textMuted,
+        )
+        Text(
+            if (expanded) "  ▾" else "  ▸",
+            style = CyberType.sectionCode,
+            color = colors.accent,
+        )
     }
 }
 
+/** One archived generation: play glyph, text summary, mono meta line. */
 @Composable
-private fun HistoryRow(
+private fun ArchiveRow(
     item: GenerationHistoryEntity,
     selectMode: Boolean,
     selected: Boolean,
@@ -317,35 +368,59 @@ private fun HistoryRow(
     onClick: () -> Unit,
     onToggleSelect: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    val colors = LocalCyberColors.current
+    CyberCard(highlighted = isPlaying) {
         Row(
-            modifier = Modifier.padding(12.dp).clickable(onClick = onClick),
+            modifier = Modifier.clickable(onClick = onClick),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selectMode) {
-                Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onToggleSelect() },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = colors.accent,
+                        checkmarkColor = colors.onAccent,
+                        uncheckedColor = colors.outlineStrong,
+                    ),
+                )
             }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+            Text(
+                "▶",
+                style = CyberType.terminalValue,
+                color = if (item.success) colors.accent else colors.danger,
+            )
+            Spacer(Modifier.padding(6.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     item.inputText,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
+                    fontSize = 13.sp,
+                    color = colors.textPrimary,
                 )
-                Text(
-                    buildString {
-                        append(SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(item.createdAt)))
-                        if (item.success && item.durationMs != null) {
-                            append(" · 时长 ${formatDuration(item.durationMs)}")
-                        }
-                        if (isPlaying) append(" · 播放中")
-                    } + if (item.success) "" else " · 生成失败",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (item.success) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                )
-            }
-            if (!selectMode && item.success) {
-                IconButton(onClick = onClick) { Text("▶") }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(item.createdAt)),
+                        style = CyberType.terminalLabel,
+                        color = colors.textMuted,
+                    )
+                    if (item.success && item.durationMs != null) {
+                        Text(
+                            formatDurationClock(item.durationMs),
+                            style = CyberType.terminalLabel,
+                            color = colors.textMuted,
+                        )
+                    }
+                    if (isPlaying) {
+                        PulsingDot(colors.cyan, diameter = 5.dp)
+                        Text("播放中", style = CyberType.terminalLabel, color = colors.cyan)
+                    }
+                    if (!item.success) {
+                        Text("生成失败", style = CyberType.terminalLabel, color = colors.danger)
+                    }
+                }
             }
         }
     }
@@ -353,22 +428,23 @@ private fun HistoryRow(
 
 @Composable
 private fun MiniPlayerBar(title: String, onStop: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("♪", style = MaterialTheme.typography.titleMedium)
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = onStop) { Text("停止") }
-        }
+    val colors = LocalCyberColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        PulsingDot(colors.accent)
+        Text(
+            title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = CyberType.terminalValue,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        CyberOutlinedButton(text = "停止", onClick = onStop)
     }
-}
-
-private fun formatDuration(durationMs: Long): String {
-    val totalSeconds = (durationMs + 500) / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(Locale.US, minutes, seconds)
 }
