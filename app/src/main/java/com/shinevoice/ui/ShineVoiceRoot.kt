@@ -136,24 +136,24 @@ fun ShineVoiceRoot(
                     onSave = { saveLauncher.launch("shinevoice-${System.currentTimeMillis()}.wav") },
                     onShare = {
                         val source = state.lastResult?.audioFile?.let(::File)
-                        if (source == null) {
-                            Toast.makeText(context, "没有可分享的音频。", Toast.LENGTH_SHORT).show()
-                            return@let
-                        }
-                        runCatching {
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                source,
-                            )
-                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                type = "audio/wav"
-                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        if (source != null) {
+                            runCatching {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    source,
+                                )
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "audio/wav"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(intent, "分享语音"))
+                            }.onFailure {
+                                Toast.makeText(context, "分享失败：${it.message}", Toast.LENGTH_LONG).show()
                             }
-                            context.startActivity(android.content.Intent.createChooser(intent, "分享语音"))
-                        }.onFailure {
-                            Toast.makeText(context, "分享失败：${it.message}", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(context, "没有可分享的音频。", Toast.LENGTH_SHORT).show()
                         }
                     },
                 )
@@ -236,20 +236,13 @@ private fun CreateScreen(
         }
         item {
             Text("生成方式", style = MaterialTheme.typography.labelMedium)
-            androidx.compose.material3.SingleChoiceSegmentedButtonRow(
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                providerOptions.forEachIndexed { index, providerId ->
-                    androidx.compose.material3.SegmentedButton(
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                providerOptions.forEach { providerId ->
+                    androidx.compose.material3.FilterChip(
                         selected = state.selectedProviderId == providerId,
                         onClick = { onSelectProvider(providerId) },
-                        shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
-                            index = index,
-                            count = providerOptions.size,
-                        ),
-                    ) {
-                        Text(providerLabel(providerId))
-                    }
+                        label = { Text(providerLabel(providerId)) },
+                    )
                 }
             }
         }
@@ -445,26 +438,21 @@ private fun SettingsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("主题", fontWeight = FontWeight.Medium)
-                    androidx.compose.material3.SingleChoiceSegmentedButtonRow(
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        ThemeMode.entries.forEachIndexed { index, mode ->
-                            androidx.compose.material3.SegmentedButton(
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThemeMode.entries.forEach { mode ->
+                            androidx.compose.material3.FilterChip(
                                 selected = state.themeMode == mode,
                                 onClick = { viewModel.onThemeModeChanged(mode) },
-                                shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = ThemeMode.entries.size,
-                                ),
-                            ) {
-                                Text(
-                                    when (mode) {
-                                        ThemeMode.SYSTEM -> "跟随系统"
-                                        ThemeMode.LIGHT -> "亮色"
-                                        ThemeMode.DARK -> "暗色"
-                                    },
-                                )
-                            }
+                                label = {
+                                    Text(
+                                        when (mode) {
+                                            ThemeMode.SYSTEM -> "跟随系统"
+                                            ThemeMode.LIGHT -> "亮色"
+                                            ThemeMode.DARK -> "暗色"
+                                        },
+                                    )
+                                },
+                            )
                         }
                     }
                 }

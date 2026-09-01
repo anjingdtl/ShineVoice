@@ -162,8 +162,10 @@ class AndroidSystemTtsProvider(
 
         val output = wavStorage.generatedFile(request.taskId)
         val params = Bundle().apply {
-            putFloat(android.speech.tts.Engine.KEY_PARAM_PITCH, request.pitch.coerceIn(0.5f, 2.0f))
-            putFloat(android.speech.tts.Engine.KEY_PARAM_RATE, request.speed.coerceIn(0.5f, 2.0f))
+            // Constants match android.speech.tts.Engine.KEY_PARAM_PITCH / KEY_PARAM_RATE
+            // ("pitch" / "rate"); hard-coded to avoid SDK constant drift across API levels.
+            putFloat("pitch", request.pitch.coerceIn(0.5f, 2.0f))
+            putFloat("rate", request.speed.coerceIn(0.5f, 2.0f))
         }
 
         return suspendCancellableCoroutine { cont ->
