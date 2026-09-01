@@ -215,11 +215,11 @@ fun SettingsScreen(
                 if (state.systemVoices.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "中文语音（${state.systemVoices.size} 个）",
+                        "中文语音（${state.systemVoices.size} 个音色）",
                         style = CyberType.terminalLabel,
                         color = colors.textMuted,
                     )
-                    state.systemVoices.take(8).forEach { voice ->
+                    state.systemVoices.forEach { voice ->
                         CyberRadioRow(
                             selected = state.systemSelectedVoice == voice.id,
                             enabled = true,
@@ -227,7 +227,11 @@ fun SettingsScreen(
                             onClick = { viewModel.selectSystemVoice(voice.id) },
                         )
                     }
-                    Text("未指定语音时使用引擎默认语音", fontSize = 11.sp, color = colors.textMuted)
+                    Text(
+                        "未指定语音时使用引擎默认语音；同一音色优先展示离线版，联网版仅在无离线实现时出现。",
+                        fontSize = 11.sp,
+                        color = colors.textMuted,
+                    )
                 }
                 Spacer(Modifier.height(6.dp))
                 Text("在音色库中可为每个音色绑定系统语音。", fontSize = 11.sp, color = colors.textMuted)

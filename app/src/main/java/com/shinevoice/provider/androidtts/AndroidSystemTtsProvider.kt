@@ -202,20 +202,33 @@ class AndroidSystemTtsProvider(
         )
     }
 
-    /** Chinese voices of the current engine (initializing it if needed). */
+    /**
+     * Chinese voices of the current engine (initializing it if needed).
+     *
+     * Engines like Google expose every voice variant twice (offline `-local`
+     * and online `-network` twins, e.g. cmn-cn-x-ccc-local/-network), which
+     * renders as near-duplicate technical rows. We surface ONE row per voice
+     * variant, preferring the offline build and only falling back to the
+     * network twin when the variant has no offline implementation.
+     */
     override suspend fun getVoices(): List<TtsVoice> {
         if (tts == null) {
             val init = initialize()
             if (!init.success) return emptyList()
         }
         return runCatching {
-            chineseVoicesOf(tts).map { voice ->
-                TtsVoice(
-                    id = voice.name,
-                    displayName = voiceDisplayName(voice),
-                    language = voice.locale.toLanguageTag(),
-                )
-            }
+            chineseVoicesOf(tts)
+                .groupBy { voiceVariantCode(it) }
+                .values
+                .mapNotNull { group -> group.minByOrNull { it.isNetworkConnectionRequired } }
+                .map { voice ->
+                    TtsVoice(
+                        id = voice.name,
+                        displayName = voiceDisplayName(voice),
+                        language = voice.locale.toLanguageTag(),
+                    )
+                }
+                .sortedBy { it.id }
         }.getOrDefault(emptyList())
     }
 
@@ -227,10 +240,20 @@ class AndroidSystemTtsProvider(
             }
             .sortedBy { it.name }
 
+    /** "cmn-cn-x-ccc-local" -> "ccc"; unparseable names keep their full form. */
+    internal fun voiceVariantCode(voice: AndroidVoice): String {
+        val name = voice.name.substringAfterLast('#')
+        val parts = name.split('-')
+        return if (parts.size >= 2) parts[parts.size - 2] else name
+    }
+
     private fun voiceDisplayName(voice: AndroidVoice): String {
-        val base = voice.name.substringAfterLast('#').ifBlank { voice.name }
-        val suffix = if (voice.isNetworkConnectionRequired) "（联网）" else ""
-        return base + suffix
+        val code = voiceVariantCode(voice).uppercase(java.util.Locale.US)
+        return if (voice.isNetworkConnectionRequired) {
+            "中文音色 $code（联网）"
+        } else {
+            "中文音色 $code（离线）"
+        }
     }
 
     override suspend fun validateConfig(): ProviderResult {
