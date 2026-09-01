@@ -300,8 +300,10 @@ class MainViewModel(
                 it.copy(
                     isGenerating = false,
                     lastResult = result,
+                    // Normal users see no engineering metrics; elapsed ms stays
+                    // in diagnostics (设置 → 高级 → 开发与诊断).
                     message = if (result.success) {
-                        "生成成功：${result.elapsedMs} ms"
+                        "生成成功"
                     } else {
                         result.error?.userMessage ?: "生成失败"
                     },
