@@ -31,7 +31,7 @@ if [ "$SIZE" -lt "$MIN_SIZE" ]; then
 fi
 
 ACTUAL_SHA256=$(sha256sum "$DEST" | cut -d' ' -f1)
-if [ "${ACTUAL_SHA256,,}" != "$EXPECTED_SHA256" ]; then
+if [ "${ACTUAL_SHA256^^}" != "$EXPECTED_SHA256" ]; then
     echo "AAR checksum mismatch: expected $EXPECTED_SHA256, got $ACTUAL_SHA256" >&2
     exit 1
 fi
