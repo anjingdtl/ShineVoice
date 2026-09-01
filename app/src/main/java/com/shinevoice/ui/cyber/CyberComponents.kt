@@ -541,8 +541,8 @@ fun CyberDialog(
     title: String,
     modifier: Modifier = Modifier,
     code: String = "SYSTEM DIALOG",
-    content: @Composable ColumnScope.() -> Unit = {},
     actions: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit = {},
 ) {
     val colors = LocalCyberColors.current
     Dialog(onDismissRequest = onDismissRequest) {
