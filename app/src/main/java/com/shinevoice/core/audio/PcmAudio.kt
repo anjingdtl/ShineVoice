@@ -26,26 +26,26 @@ object MonoWavReader {
 
     fun read(file: File): PcmAudio? = try {
         RandomAccessFile(file, "r").use { raf ->
-            if (raf.readInt() != RIFF) return null
+            if (raf.readIntLe() != RIFF) return null
             raf.readInt() // chunk size
-            if (raf.readInt() != WAVE) return null
+            if (raf.readIntLe() != WAVE) return null
             var sampleRate = 0
             var channels = 0
             var bitsPerSample = 16
             var isPcm = true
             val dataChunks = mutableListOf<Pair<Long, Int>>()
             while (raf.filePointer + 8 <= raf.length()) {
-                val chunkId = raf.readInt()
-                val chunkSize = raf.readInt()
+                val chunkId = raf.readIntLe()
+                val chunkSize = raf.readIntLe()
                 when (chunkId) {
                     CHUNK_FMT -> {
-                        val formatTag = raf.readShort().toInt() and 0xffff
+                        val formatTag = raf.readShortLe()
                         isPcm = formatTag == PCM
-                        channels = raf.readShort().toInt() and 0xffff
-                        sampleRate = raf.readInt()
-                        raf.readInt() // avg bytes/sec
-                        raf.readShort() // block align
-                        bitsPerSample = raf.readShort().toInt() and 0xffff
+                        channels = raf.readShortLe()
+                        sampleRate = raf.readIntLe()
+                        raf.readIntLe() // avg bytes/sec
+                        raf.readShortLe() // block align
+                        bitsPerSample = raf.readShortLe()
                         val remaining = chunkSize - 16
                         if (remaining > 0) raf.skipBytes(remaining)
                     }
@@ -94,6 +94,20 @@ object MonoWavReader {
     }
 
     private const val BUFFER_FRAMES = 4096
+
+    /** Reads a little-endian 32-bit value from the current position. */
+    private fun RandomAccessFile.readIntLe(): Int {
+        val bytes = ByteArray(4)
+        readFully(bytes)
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).int
+    }
+
+    /** Reads a little-endian 16-bit value from the current position. */
+    private fun RandomAccessFile.readShortLe(): Int {
+        val bytes = ByteArray(2)
+        readFully(bytes)
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xffff
+    }
 }
 
 /** Writer for mono 16-bit PCM WAV. */
