@@ -75,14 +75,13 @@ fun HistoryScreen(
     ) { destination ->
         val zip = application.zippedExport
         if (destination == null || zip == null) return@rememberLauncherForActivityResult
-        runCatching {
+        try {
             context.contentResolver.openOutputStream(destination)?.use { out ->
                 zip.inputStream().use { it.copyTo(out) }
-            }
-        }.onSuccess {
+            } ?: throw IllegalStateException("无法打开导出位置")
             Toast.makeText(context, "ZIP 已导出。", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            Toast.makeText(context, "导出失败：${it.message}", Toast.LENGTH_LONG).show()
+        } catch (error: Exception) {
+            Toast.makeText(context, "导出失败：${error.message}", Toast.LENGTH_LONG).show()
         } finally {
             application.zippedExport = null
         }
