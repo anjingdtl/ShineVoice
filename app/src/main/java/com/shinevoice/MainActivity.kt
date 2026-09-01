@@ -3,6 +3,7 @@ package com.shinevoice
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.shinevoice.core.audio.AudioRouteManager
 import com.shinevoice.core.storage.AudioPlaybackController
@@ -19,6 +20,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             ShineVoiceRoot(
                 viewModel = viewModel,

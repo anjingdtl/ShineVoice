@@ -1,10 +1,11 @@
 <resources>
-    <style name="Theme.ShineVoice" parent="android:style/Theme.Material.Light.NoActionBar">
+    <!-- Dark-neutral base: the cyberpunk dark theme is primary, so avoid a
+         white flash during cold start. In-app Compose colors take over. -->
+    <style name="Theme.ShineVoice" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#6750A4</item>
-        <item name="android:navigationBarColor">#FFFBFE</item>
-        <item name="android:statusBarColor">#FFFBFE</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#FCEE0A</item>
+        <item name="android:navigationBarColor">#07090E</item>
+        <item name="android:statusBarColor">#07090E</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
-

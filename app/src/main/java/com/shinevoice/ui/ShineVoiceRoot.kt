@@ -19,19 +19,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,6 +48,10 @@ import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.settings.ThemeMode
 import com.shinevoice.domain.tts.TtsResult
+import com.shinevoice.ui.cyber.CyberBackground
+import com.shinevoice.ui.cyber.CyberNavItem
+import com.shinevoice.ui.cyber.CyberNavigationBar
+import com.shinevoice.ui.cyber.CyberTheme
 import java.io.File
 import java.util.Locale
 
@@ -106,23 +106,34 @@ fun ShineVoiceRoot(
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
 
-    MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            topBar = { TopAppBar(title = { Text("ShineVoice") }) },
-            bottomBar = {
-                NavigationBar(modifier = Modifier.navigationBarsPadding()) {
-                    AppPage.entries.forEach { page ->
-                        NavigationBarItem(
-                            selected = selectedPage == page.ordinal,
-                            onClick = { selectedPage = page.ordinal },
-                            icon = { Text(page.title.take(1)) },
-                            label = { Text(page.title) },
-                        )
-                    }
-                }
-            },
-        ) { padding ->
+    // Keep system bar icon contrast in sync with the in-app theme override.
+    val activity = context as? android.app.Activity
+    LaunchedEffect(darkTheme) {
+        activity?.window?.let { window ->
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                .isAppearanceLightStatusBars = !darkTheme
+        }
+    }
+
+    CyberTheme(darkTheme = darkTheme) {
+        CyberBackground(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Color.Transparent,
+                topBar = {},
+                bottomBar = {
+                    CyberNavigationBar(
+                        items = listOf(
+                            CyberNavItem("CREATE", "▣", "创作"),
+                            CyberNavItem("VOICES", "◈", "音色"),
+                            CyberNavItem("ARCHIVE", "▤", "历史"),
+                            CyberNavItem("SYSTEM", "⚙", "设置"),
+                        ),
+                        selectedIndex = selectedPage,
+                        onSelect = { selectedPage = it },
+                    )
+                },
+            ) { padding ->
             when (AppPage.entries[selectedPage]) {
                 AppPage.CREATE -> CreateScreen(
                     state = state,
@@ -185,6 +196,7 @@ fun ShineVoiceRoot(
                     onRefresh = viewModel::refreshModelAndInitialize,
                     onRunStability = viewModel::runTwentyGenerationStabilityTest,
                 )
+            }
             }
         }
     }
