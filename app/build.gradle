@@ -5,6 +5,29 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+// Standard ZipVoice bundle embedded in the APK (标配内置模型). Staged from
+// runtime/zipvoice (git-ignored, produced by scripts/prepare-zipvoice-runtime)
+// into src/main/assets/bundled before every build. When runtime/ is absent
+// (e.g. CI) the task skips and the APK simply builds without the bundle;
+// the app then behaves exactly like the old side-load flow.
+def bundledRuntimeSrc = file("${rootDir}/runtime/zipvoice")
+def bundledAssetsDst = file('src/main/assets/bundled')
+
+tasks.register('prepareBundledModelAssets', Copy) {
+    onlyIf { bundledRuntimeSrc.isDirectory() }
+    from(bundledRuntimeSrc) {
+        include 'model-manifest.properties', 'vocos_24khz.onnx',
+                'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia/**'
+        exclude 'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia/test_wavs/**'
+        into 'models/zipvoice'
+    }
+    from(file("${bundledRuntimeSrc}/reference/default")) {
+        include 'reference.wav'
+        into 'voices/default'
+    }
+    into bundledAssetsDst
+}
+
 android {
     namespace 'com.shinevoice'
     compileSdk 36
@@ -85,4 +108,10 @@ dependencies {
     testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+}
+
+// Stage the bundled model into assets before compiling, so assembleDebug /
+// assembleRelease always embed the latest local bundle.
+tasks.named('preBuild') {
+    dependsOn 'prepareBundledModelAssets'
 }

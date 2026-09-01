@@ -30,3 +30,4 @@ Thumbs.db
 # Native build output
 .externalNativeBuild/
 .cxx/
+app/src/main/assets/bundled/

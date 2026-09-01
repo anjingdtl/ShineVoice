@@ -2,7 +2,16 @@
 
 ShineVoice 使用官方 sherpa-onnx 发布版 `v1.13.6` AAR 和官方 `tts-models` 中的 `sherpa-onnx-zipvoice-distill-int8-zh-en-emilia`。AAR 与模型均不提交 Git。
 
-## 下载与解包
+## 标配内置（默认交付方式）
+
+标准 ZipVoice 模型已作为标配打包进 APK：构建时 Gradle 任务 `prepareBundledModelAssets`
+自动把 `runtime/zipvoice/`（模型目录、vocos 声码器、manifest、默认参考音频）装载到
+`app/src/main/assets/bundled/`（Git 忽略；`runtime/` 缺失时任务跳过，APK 退化为无内置
+模型，行为与旧版手动安装一致）。首次启动 `ModelDirectoryResolver.inspect()` 检测到
+模型缺失时自动解包到应用专属目录（约 200 MB，数秒完成），随后照常执行聚合 SHA-256
+校验；已就绪的用户自装模型永不被覆盖。APK 体积约 200 MB，用户零下载、离线即用。
+
+## 下载与解包（更新内置模型 / 无 runtime 目录时）
 
 在项目根目录执行：
 

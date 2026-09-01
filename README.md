@@ -61,7 +61,7 @@ scripts/fetch-sherpa-onnx.sh   # 拉取官方 AAR 并校验 SHA-256
 
 ## 当前能力
 
-- **本地生成**（ZipVoice-Distill INT8，离线可用）：文本 → 语音，支持语速调节。
+- **本地生成**（ZipVoice-Distill INT8，离线可用）：文本 → 语音，支持语速调节；标准模型作为标配内置 APK（约 200 MB），首次启动自动解包，零下载、离线即用。
 - **音色库**：列表化管理音色；创建/重命名/删除；录音或导入（WAV/MP3/M4A/AAC → 24 kHz 单声道）；参考文本编辑；设为当前；试听；最近使用；本地 / 云端 / 系统绑定徽标。
 - **系统语音**（Android System TTS）：设备自带中文引擎朗读，支持语速与音高。
 - **云端高清**（MiniMax，BYOK）：API Key 经 Android Keystore 加密保存；测试连接；上传参考音频克隆云端音色并保存 voice_id；云端合成、播放、保存、分享。

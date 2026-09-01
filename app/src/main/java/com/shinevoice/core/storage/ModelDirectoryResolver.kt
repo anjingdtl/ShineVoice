@@ -78,9 +78,16 @@ class ModelDirectoryResolver(context: Context) {
     companion object {
         const val ZIPVOICE_MODEL_ID = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
         const val DEFAULT_REFERENCE_TEXT = "那还是三十六年前, 一九八七年. 我呢考上了武汉大学的计算机系."
+
+        /** APK asset subtree carrying the standard embedded model bundle. */
+        private const val BUNDLED_ASSET_ROOT = "bundled"
+        private const val BUNDLED_MODEL_DIR = "$BUNDLED_ASSET_ROOT/models/zipvoice"
+        private const val BUNDLED_REFERENCE = "$BUNDLED_ASSET_ROOT/voices/default/reference.wav"
     }
 
-    private val externalRoot = context.getExternalFilesDir(null) ?: context.filesDir
+    private val appContext = context.applicationContext
+    private val assets = appContext.assets
+    private val externalRoot = appContext.getExternalFilesDir(null) ?: appContext.filesDir
     val zipVoiceRoot: File = File(externalRoot, "models/zipvoice")
     val modelDirectory: File = File(zipVoiceRoot, ZIPVOICE_MODEL_ID)
     val referenceAudio: File = File(externalRoot, "voices/default/reference.wav")
@@ -100,9 +107,43 @@ class ModelDirectoryResolver(context: Context) {
         manifest = manifest,
     )
 
+    /** True when this APK carries the standard embedded ZipVoice bundle. */
+    fun hasBundledModel(): Boolean =
+        runCatching { assets.list(BUNDLED_MODEL_DIR)?.isNotEmpty() == true }.getOrDefault(false)
+
+    /**
+     * First-run extraction of the APK-embedded standard model (标配内置模型):
+     * copies the bundled asset tree onto the deployable external layout when
+     * the on-disk model is incomplete. A ready, user-managed install is never
+     * overwritten; the default reference.wav is only written when missing so
+     * user recordings under voices/<profileId>/ are never touched.
+     *
+     * @return true when anything was extracted and the status cache must be
+     *         re-inspected.
+     */
+    @Synchronized
+    fun extractBundledModelIfNeeded(): Boolean {
+        if (!hasBundledModel()) return false
+        if (layout().isReady()) return false
+        var changed = false
+        runCatching {
+            changed = copyAssetDir(BUNDLED_MODEL_DIR, zipVoiceRoot)
+            if (!referenceAudio.isFile) {
+                referenceAudio.parentFile?.mkdirs()
+                copyAssetFile(BUNDLED_REFERENCE, referenceAudio)
+                changed = true
+            }
+        }.onFailure { android.util.Log.w("ModelDirectoryResolver", "bundled model extraction failed", it) }
+        if (changed) cachedStatus = null
+        return changed
+    }
+
     @Synchronized
     fun inspect(forceIntegrityCheck: Boolean = false): ZipVoiceModelStatus {
         if (!forceIntegrityCheck) cachedStatus?.let { return it }
+        // Fresh install on a bundled build: extract the embedded standard
+        // model before reporting status so users never need a download.
+        if (!layout().isReady()) extractBundledModelIfNeeded()
         val layout = layout()
         val missing = layout.missingFiles()
         val parsedManifest = readManifest()
@@ -116,6 +157,35 @@ class ModelDirectoryResolver(context: Context) {
         )
         cachedStatus = status
         return status
+    }
+
+    /** Recursively copies an asset directory tree; true when bytes were written. */
+    private fun copyAssetDir(assetDir: String, target: File): Boolean {
+        val entries = assets.list(assetDir).orEmpty()
+        if (entries.isEmpty()) return false
+        var wrote = false
+        target.mkdirs()
+        for (entry in entries) {
+            val assetPath = if (assetDir.isEmpty()) entry else "$assetDir/$entry"
+            val destination = File(target, entry)
+            val isDirectory = runCatching { assets.list(assetPath).orEmpty().isNotEmpty() }.getOrDefault(false)
+            if (isDirectory) {
+                wrote = copyAssetDir(assetPath, destination) || wrote
+            } else {
+                if (destination.isFile && destination.length() > 0) continue
+                copyAssetFile(assetPath, destination)
+                wrote = true
+            }
+        }
+        return wrote
+    }
+
+    private fun copyAssetFile(assetPath: String, destination: File) {
+        assets.open(assetPath).use { input ->
+            destination.outputStream().use { output ->
+                input.copyTo(output, DEFAULT_BUFFER_SIZE)
+            }
+        }
     }
 
     /** Validates the VoiceProfile inputs (default reference audio + its transcript) independently of model status. */

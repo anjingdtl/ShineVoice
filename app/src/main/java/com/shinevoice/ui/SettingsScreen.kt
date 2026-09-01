@@ -453,9 +453,9 @@ fun SettingsScreen(
             },
         ) {
             Text(
-                "当前版本内置 ZipVoice 中文声音克隆模型目录的检测。新模型需要先放到手机存储的应用专属目录 " +
-                    "Android/data/com.shinevoice.debug/files/models/ 下，然后回到本页点击「重新检测」。模型文件较大，" +
-                    "不通过应用内下载（后续版本提供）。",
+                "标准版已内置 ZipVoice 中文声音克隆模型：首次启动会自动解包到本机（约 200 MB），无需下载、离线可用。" +
+                    "如需更换其他模型，可将其放到手机存储的应用专属目录 Android/data/com.shinevoice.debug/files/models/ 下，" +
+                    "然后回到本页点击「重新检测」。",
                 fontSize = 12.sp,
                 color = colors.textPrimary,
             )
