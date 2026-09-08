@@ -4,10 +4,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.shinevoice.core.storage.ModelDirectoryResolver
 import com.shinevoice.domain.tts.TtsRequest
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -54,6 +56,12 @@ class E2eRealChainTest {
         android.os.Debug.MemoryInfo().also { android.os.Debug.getMemoryInfo(it) }.totalPss
     }.getOrDefault(-1)
 
+    private fun voiceFingerprint(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray())
+            .take(6)
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
     /** 20 consecutive real ZipVoice generations with timing/RTF/PSS statistics. */
     @Test
     fun test01_zipVoiceTwentyRealGenerations() = runBlocking {
@@ -99,7 +107,7 @@ class E2eRealChainTest {
         assertEquals("ZipVoice 20-run stability failures", 0, failures)
     }
 
-    /** Real engine enumeration + Chinese voice synthesis via Android System TTS. */
+    /** Real engine enumeration + language-aware synthesis via Android System TTS. */
     @Test
     fun test02_androidSystemTtsEnginesAndSynthesis() = runBlocking {
         val provider = app.providerRegistry.get(AndroidSystemTtsProvider.PROVIDER_ID)
@@ -111,20 +119,44 @@ class E2eRealChainTest {
         val init = provider.initialize()
         assertTrue("system tts init failed: ${init.message}", init.success)
         val voices = provider.getVoices()
-        assertTrue("no Chinese voices for default engine", voices.isNotEmpty())
+        assertTrue("no system voices for default engine", voices.isNotEmpty())
+        val chineseVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.ZH_CN.id }
+            ?: voices.first()
         println("E2E SystemTTS chineseVoices=${voices.size} first=${voices.first().displayName}")
         val request = TtsRequest(
             taskId = "e2e-sys-${UUID.randomUUID()}",
             text = "这是系统语音引擎的真实中文朗读测试。",
             providerId = AndroidSystemTtsProvider.PROVIDER_ID,
-            voiceId = voices.first().id,
+            voiceId = chineseVoice.id,
+            language = TtsLanguageCatalog.ZH_CN.id,
             speed = 1.0f,
         )
         val result = app.ttsManager.synthesize(request)
         assertTrue("system tts synthesis failed: ${result.error?.userMessage}", result.success)
         assertTrue("system tts output not wav", isWav(File(result.audioFile!!)))
+        val englishVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.EN_US.id }
+        if (englishVoice != null) {
+            val englishResult = app.ttsManager.synthesize(
+                TtsRequest(
+                    taskId = "e2e-sys-en-" + UUID.randomUUID(),
+                    text = "This is a real English system voice synthesis test.",
+                    providerId = AndroidSystemTtsProvider.PROVIDER_ID,
+                    voiceId = englishVoice.id,
+                    language = TtsLanguageCatalog.EN_US.id,
+                    speed = 1.0f,
+                ),
+            )
+            assertTrue("system English synthesis failed", englishResult.success)
+            assertTrue("system English output not wav", isWav(File(englishResult.audioFile!!)))
+            println("E2E SystemTTS English voice verified language=" + englishVoice.language)
+        } else {
+            println("E2E SystemTTS English SKIPPED (engine has no English voice)")
+        }
         val caps = provider.getCapabilities()
-        println("E2E SystemTTS supportsOffline=${caps.supportsOffline} voice=${voices.first().id}")
+        println(
+            "E2E SystemTTS supportsOffline=${caps.supportsOffline} " +
+                "voiceLength=${voices.first().id.length} voiceFingerprint=${voiceFingerprint(voices.first().id)}",
+        )
         provider.release()
     }
 
@@ -262,19 +294,23 @@ class E2eRealChainTest {
                     result = app.ttsManager.synthesize(request.copy(taskId = request.taskId + "-retry"))
                 }
                 val providerOk = result.providerId == providerId
-                val voiceOk = result.voiceId == null || voiceId == null || result.voiceId == voiceId
+                val voiceOk = result.voiceId == null || result.voiceId == voiceId
                 val wavOk = result.success && isWav(File(result.audioFile!!))
                 if (!result.success || !providerOk || !voiceOk || !wavOk) {
                     failures++
                     println(
                         "E2E 3-way FAILURE round=${round + 1} label=$label success=${result.success} " +
-                            "providerEcho=${result.providerId} voiceEcho=${result.voiceId} " +
+                            "providerEcho=${result.providerId} " +
+                                "voiceEchoLength=${result.voiceId?.length} " +
+                                "voiceEchoFingerprint=${result.voiceId?.let(::voiceFingerprint)} " +
                             "err=${result.error?.userMessage}",
                     )
                 }
                 log.append(
                     "round=${round + 1} want=$label($providerId) got=${result.providerId} " +
-                        "voice=${result.voiceId} ok=${result.success} ${result.elapsedMs}ms " +
+                        "voiceLength=${result.voiceId?.length} " +
+                        "voiceFingerprint=${result.voiceId?.let(::voiceFingerprint)} " +
+                        "ok=${result.success} ${result.elapsedMs}ms " +
                         "file=${result.audioFile?.substringAfterLast('/')}\n",
                 )
                 if (providerId == MiniMaxProvider.PROVIDER_ID) kotlinx.coroutines.delay(2_000)
@@ -360,6 +396,116 @@ class E2eRealChainTest {
                 "trend=${trend.joinToString(" ")}",
         )
         assertEquals("ZipVoice 50-run failures", 0, failures)
+    }
+
+    /** Real bundled ZipVoice inference for both languages declared by the model. */
+    @Test
+    fun test08_zipVoiceChineseAndEnglishRealInference() = runBlocking {
+        val status = app.modelResolver.inspect(forceIntegrityCheck = true)
+        assertTrue("model not ready: " + status.summary, status.ready)
+        assertTrue("ZipVoice init failed", app.ttsManager.initialize(SherpaZipVoiceProvider.PROVIDER_ID).success)
+
+        val cases = listOf(
+            Triple(TtsLanguageCatalog.ZH_CN.id, "这是本地模型的中文真实推理测试。", 1.0f),
+            Triple(TtsLanguageCatalog.EN_US.id, "This is a real English inference test from the bundled model.", 0.75f),
+        )
+        for (case in cases) {
+            val language = case.first
+            val request = TtsRequest(
+                taskId = "e2e-zv-language-" + language + "-" + UUID.randomUUID(),
+                text = case.second,
+                providerId = SherpaZipVoiceProvider.PROVIDER_ID,
+                voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
+                language = language,
+                speed = case.third,
+                extra = mapOf(
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to app.modelResolver.referenceAudio.absolutePath,
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
+                    SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
+                ),
+            )
+            val result = app.ttsManager.synthesize(request)
+            assertTrue(
+                "ZipVoice " + language + " failed: " + result.error?.userMessage,
+                result.success,
+            )
+            assertTrue("ZipVoice " + language + " output is not WAV", isWav(File(result.audioFile!!)))
+            println(
+                "E2E_ZIPVOICE_LANGUAGE language=" + language +
+                    " speed=" + case.third + " elapsedMs=" + result.elapsedMs +
+                    " bytes=" + File(result.audioFile!!).length(),
+            )
+        }
+    }
+
+    /**
+     * Real MiniMax contract test: one cloned voice binding, five language/rate
+     * combinations, and no voice cloning during language changes.
+     */
+    @Test
+    fun test09_minimaxMultilingualSameVoiceAndSpeed() = runBlocking {
+        val apiKey = args("minimaxApiKey")
+            ?: return@runBlocking println("E2E MiniMax multilingual SKIPPED (no -e minimaxApiKey)")
+        val cloneRef = args("cloneRef")?.let(::File)
+        app.minimaxConfig.save("", apiKey, com.shinevoice.data.settings.MiniMaxRegion.CN)
+        val provider = app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider
+
+        var voiceId = app.voiceProfileManager.observeProfiles().first()
+            .firstOrNull { profile -> !profile.minimaxVoiceId.isNullOrBlank() }
+            ?.minimaxVoiceId
+        if (voiceId == null && cloneRef != null && cloneRef.isFile) {
+            val clone = provider.cloneVoice(
+                com.shinevoice.domain.tts.VoiceCloneRequest(
+                    voiceProfileId = "e2e-multilingual-clone",
+                    referenceAudioPath = cloneRef.absolutePath,
+                    referenceText = "",
+                ),
+            )
+            assertTrue("MiniMax multilingual clone failed", clone.success)
+            voiceId = clone.voiceId
+        }
+        val stableVoiceId = voiceId ?: run {
+            println("E2E MiniMax multilingual SKIPPED (no bound voice and no cloneRef)")
+            return@runBlocking
+        }
+        val cases = listOf(
+            Triple(TtsLanguageCatalog.ZH_CN.id, "这是同一克隆声纹的中文测试。", 1.0f),
+            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice in English.", 1.0f),
+            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice at a slower rate.", 0.75f),
+            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice at a faster rate.", 1.5f),
+            Triple(TtsLanguageCatalog.JA_JP.id, "これは同じクローン音声の日本語テストです。", 1.0f),
+        )
+        val observedVoiceIds = mutableListOf<String>()
+        for (case in cases) {
+            val result = app.ttsManager.synthesize(
+                TtsRequest(
+                    taskId = "e2e-mm-language-" + case.first + "-" + case.third + "-" + UUID.randomUUID(),
+                    text = case.second,
+                    providerId = MiniMaxProvider.PROVIDER_ID,
+                    voiceId = stableVoiceId,
+                    language = case.first,
+                    speed = case.third,
+                ),
+            )
+            assertTrue(
+                "MiniMax " + case.first + " " + case.third + "x failed: " + result.error?.userMessage,
+                result.success,
+            )
+            assertTrue("MiniMax output is not WAV", isWav(File(result.audioFile!!)))
+            assertEquals(stableVoiceId, result.voiceId)
+            observedVoiceIds += result.voiceId.orEmpty()
+            println(
+                "E2E_MINIMAX_LANGUAGE language=" + case.first +
+                    " speed=" + case.third +
+                    " voiceIdLength=" + stableVoiceId.length +
+                    " voiceIdFingerprint=" + voiceFingerprint(stableVoiceId),
+            )
+        }
+        assertTrue("voiceId changed across language/rate requests", observedVoiceIds.all { it == stableVoiceId })
+        println(
+            "E2E_MINIMAX_MULTILINGUAL sameVoiceId=true languages=" +
+                cases.map { it.first }.distinct().joinToString(","),
+        )
     }
 
     /** A wrong API key must surface a Chinese business error, never a raw stack. */
