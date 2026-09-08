@@ -1,8 +1,48 @@
+import java.util.Locale
+
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.kapt'
     id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+def versionProperties = new Properties()
+def versionFile = file("${rootDir}/version.properties")
+if (!versionFile.isFile()) {
+    throw new GradleException("Missing canonical version source: ${versionFile.absolutePath}")
+}
+versionFile.withInputStream { versionProperties.load(it) }
+def canonicalVersionName = versionProperties.getProperty('versionName', '').trim()
+def canonicalVersionCode = versionProperties.getProperty('versionCode', '').trim()
+if (!(canonicalVersionName ==~ /\d+\.\d+\.\d+/)) {
+    throw new GradleException("Invalid versionName in version.properties")
+}
+if (!(canonicalVersionCode ==~ /\d+/) || canonicalVersionCode.toInteger() < 1) {
+    throw new GradleException("Invalid versionCode in version.properties")
+}
+
+def releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.toLowerCase(Locale.ROOT).contains('release')
+}
+def releaseSigningValues = [
+    'SHINEVOICE_RELEASE_STORE_FILE',
+    'SHINEVOICE_RELEASE_STORE_PASSWORD',
+    'SHINEVOICE_RELEASE_KEY_ALIAS',
+    'SHINEVOICE_RELEASE_KEY_PASSWORD',
+].collectEntries { name -> [name, System.getenv(name)] }
+if (releaseBuildRequested) {
+    def missing = releaseSigningValues.findAll { name, value -> value == null || value.trim().isEmpty() }.keySet()
+    if (!missing.isEmpty()) {
+        throw new GradleException(
+            "Release signing requires environment variable(s): ${missing.join(', ')}. " +
+                "Debug builds do not require release signing secrets."
+        )
+    }
+    def storeFile = file(releaseSigningValues['SHINEVOICE_RELEASE_STORE_FILE'])
+    if (!storeFile.isFile()) {
+        throw new GradleException("Release signing keystore not found: ${storeFile.absolutePath}")
+    }
 }
 
 // Standard ZipVoice bundle embedded in the APK (标配内置模型). Staged from
@@ -36,8 +76,8 @@ android {
         applicationId 'com.shinevoice'
         minSdk 24
         targetSdk 36
-        versionCode 2
-        versionName '1.0'
+        versionCode canonicalVersionCode.toInteger()
+        versionName canonicalVersionName
 
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables.useSupportLibrary = true
@@ -49,6 +89,17 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            if (releaseBuildRequested) {
+                storeFile file(releaseSigningValues['SHINEVOICE_RELEASE_STORE_FILE'])
+                storePassword releaseSigningValues['SHINEVOICE_RELEASE_STORE_PASSWORD']
+                keyAlias releaseSigningValues['SHINEVOICE_RELEASE_KEY_ALIAS']
+                keyPassword releaseSigningValues['SHINEVOICE_RELEASE_KEY_PASSWORD']
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix '.debug'
@@ -56,10 +107,12 @@ android {
             debuggable true
         }
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -108,6 +161,7 @@ dependencies {
     testImplementation 'org.json:json:20240303'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+    androidTestImplementation 'androidx.sqlite:sqlite-framework:2.4.0'
 }
 
 // Stage the bundled model into assets before compiling, so assembleDebug /

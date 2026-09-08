@@ -1,0 +1,10 @@
+{
+  "name": "shinevoice-release-tools",
+  "private": true,
+  "scripts": {
+    "release:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release-apk.ps1",
+    "release:metadata": "node scripts/generate-update-metadata.js",
+    "release:verify": "node scripts/verify-release-metadata.js",
+    "release:prepare": "npm run release:build && npm run release:metadata && npm run release:verify"
+  }
+}
