@@ -42,6 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.audio.PlaybackRoute
@@ -71,6 +74,7 @@ fun ShineVoiceRoot(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val application = context.applicationContext as ShineVoiceApplication
+    val lifecycleOwner = LocalLifecycleOwner.current
     var selectedPage by remember { mutableIntStateOf(AppPage.CREATE.ordinal) }
     var showVoicePicker by remember { mutableStateOf(false) }
     val saveLauncher = rememberLauncherForActivityResult(
@@ -98,6 +102,20 @@ fun ShineVoiceRoot(
     // 路由变化即时生效：空闲时供下次播放使用，播放中会按新路由续播。
     LaunchedEffect(state.playbackRoute) {
         playbackController.updateRoute(state.playbackRoute)
+    }
+
+    // Automatic update checks start only after the normal Compose surface is
+    // mounted, so Splash/model/database startup is never blocked.
+    LaunchedEffect(Unit) {
+        viewModel.checkForUpdate(force = false)
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.resumePendingUpdateInstall()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val darkTheme = when (state.themeMode) {
@@ -140,6 +158,7 @@ fun ShineVoiceRoot(
                     padding = padding,
                     onTargetTextChanged = viewModel::onTargetTextChanged,
                     onSpeedChanged = viewModel::onSpeedChanged,
+                    onLanguageChanged = viewModel::onLanguageChanged,
                     onCurrentVoiceClick = { showVoicePicker = true },
                     onSelectProvider = viewModel::onSelectProvider,
                     providerLabel = viewModel::providerLabel,
@@ -195,6 +214,8 @@ fun ShineVoiceRoot(
                     viewModel = viewModel,
                     onRefresh = viewModel::refreshModelAndInitialize,
                     onRunStability = viewModel::runTwentyGenerationStabilityTest,
+                    updateState = state.updateState,
+                    onCheckUpdate = { viewModel.checkForUpdate(force = true) },
                 )
             }
             }
@@ -208,5 +229,19 @@ fun ShineVoiceRoot(
             onPick = viewModel::setCurrentVoice,
             onDismiss = { showVoicePicker = false },
         )
+    }
+
+    when (state.updateState) {
+        is com.shinevoice.update.UpdateUiState.Available,
+        is com.shinevoice.update.UpdateUiState.Downloading,
+        is com.shinevoice.update.UpdateUiState.AwaitingInstall,
+        com.shinevoice.update.UpdateUiState.Installing,
+        -> UpdateDialog(
+            state = state.updateState,
+            onDownload = viewModel::downloadAndInstallUpdate,
+            onResumeInstall = viewModel::resumePendingUpdateInstall,
+            onDismiss = viewModel::dismissUpdate,
+        )
+        else -> Unit
     }
 }

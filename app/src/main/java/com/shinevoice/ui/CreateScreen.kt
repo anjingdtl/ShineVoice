@@ -8,11 +8,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -20,12 +28,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.domain.tts.TtsResult
+import com.shinevoice.domain.tts.TtsLanguage
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import com.shinevoice.ui.cyber.CyberButton
 import com.shinevoice.ui.cyber.CyberCard
 import com.shinevoice.ui.cyber.CyberChipState
+import com.shinevoice.ui.cyber.CyberDialog
 import com.shinevoice.ui.cyber.CyberFilterChip
 import com.shinevoice.ui.cyber.CyberOutlinedButton
 import com.shinevoice.ui.cyber.CyberPageHeader
@@ -52,6 +63,7 @@ fun CreateScreen(
     padding: PaddingValues,
     onTargetTextChanged: (String) -> Unit,
     onSpeedChanged: (Float) -> Unit,
+    onLanguageChanged: (String) -> Unit,
     onCurrentVoiceClick: () -> Unit,
     onSelectProvider: (String) -> Unit,
     providerLabel: (String) -> String,
@@ -70,6 +82,14 @@ fun CreateScreen(
     val isLocalMode = state.selectedProviderId == SherpaZipVoiceProvider.PROVIDER_ID
     val isCloudMode = state.selectedProviderId == MiniMaxProvider.PROVIDER_ID
     val referenceReady = state.referenceStatus?.ready == true
+    var showMoreLanguages by remember { mutableStateOf(false) }
+    val quickLanguageIds = setOf(
+        TtsLanguageCatalog.ZH_CN.id,
+        TtsLanguageCatalog.EN_US.id,
+        TtsLanguageCatalog.JA_JP.id,
+    )
+    val quickLanguages = state.availableLanguages.filter { it.id in quickLanguageIds }
+    val moreLanguages = state.availableLanguages.filterNot { it.id in quickLanguageIds }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -138,6 +158,51 @@ fun CreateScreen(
                         fontSize = 12.sp,
                         color = colors.accent,
                     )
+                }
+            }
+        }
+
+        // 输出语言：由当前 Provider 的真实能力驱动 ------------------------
+        item {
+            CyberCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("输出语言", style = CyberType.terminalLabel, color = colors.textMuted)
+                        Text(
+                            TtsLanguageCatalog.find(state.selectedLanguage)?.nativeName
+                                ?: TtsLanguageCatalog.displayName(state.selectedLanguage),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = colors.textPrimary,
+                        )
+                    }
+                    if (moreLanguages.isNotEmpty()) {
+                        CyberOutlinedButton(
+                            text = "更多（${state.availableLanguages.size}）",
+                            onClick = { showMoreLanguages = true },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                if (quickLanguages.isEmpty()) {
+                    Text("当前生成方式暂未报告可用语言。", fontSize = 12.sp, color = colors.textMuted)
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        quickLanguages.forEach { language ->
+                            LanguageChip(
+                                language = language,
+                                selected = state.selectedLanguage == language.id,
+                                onClick = { onLanguageChanged(language.id) },
+                            )
+                        }
+                    }
+                }
+                state.languageHint?.let { hint ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(hint, fontSize = 12.sp, color = colors.accent)
                 }
             }
         }
@@ -232,6 +297,53 @@ fun CreateScreen(
             )
         }
     }
+
+    if (showMoreLanguages) {
+        CyberDialog(
+            onDismissRequest = { showMoreLanguages = false },
+            title = "选择输出语言",
+            code = "OUTPUT LANGUAGE",
+            modifier = Modifier.heightIn(max = 520.dp),
+            actions = {
+                CyberOutlinedButton(text = "关闭", onClick = { showMoreLanguages = false })
+            },
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 390.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                state.availableLanguages.forEach { language ->
+                    LanguageChip(
+                        language = language,
+                        selected = state.selectedLanguage == language.id,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            onLanguageChanged(language.id)
+                            showMoreLanguages = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageChip(
+    language: TtsLanguage,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    CyberFilterChip(
+        selected = selected,
+        label = language.nativeName,
+        onClick = onClick,
+        modifier = modifier,
+    )
 }
 
 /** 结果卡只展示用户语言：成功/失败、时长、播放/保存/分享、播放输出切换。 */

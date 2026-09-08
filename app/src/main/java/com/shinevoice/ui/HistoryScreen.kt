@@ -38,6 +38,7 @@ import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.storage.AudioExporter
 import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.db.GenerationHistoryEntity
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.ui.cyber.CyberButton
 import com.shinevoice.ui.cyber.CyberCard
 import com.shinevoice.ui.cyber.CyberChipState
@@ -411,6 +412,13 @@ private fun ArchiveRow(
                             formatDurationClock(item.durationMs),
                             style = CyberType.terminalLabel,
                             color = colors.textMuted,
+                        )
+                    }
+                    item.language?.let { languageId ->
+                        Text(
+                            "${TtsLanguageCatalog.displayName(languageId)} · ${"%.2f".format(Locale.US, item.speed)}x",
+                            style = CyberType.terminalLabel,
+                            color = colors.cyan,
                         )
                     }
                     if (isPlaying) {

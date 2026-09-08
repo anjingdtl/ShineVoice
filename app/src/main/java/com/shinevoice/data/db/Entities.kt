@@ -48,4 +48,8 @@ data class GenerationHistoryEntity(
     val success: Boolean,
     val errorCode: String?,
     val errorMessage: String?,
+    /** BCP-47 output language selected for this generation. */
+    val language: String?,
+    /** Per-generation speech rate; legacy rows migrate to 1.0x. */
+    val speed: Float = 1.0f,
 )

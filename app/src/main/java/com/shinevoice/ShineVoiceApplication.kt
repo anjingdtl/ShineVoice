@@ -19,6 +19,7 @@ import com.shinevoice.provider.minimax.MiniMaxApiClient
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaRuntimeManager
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
+import com.shinevoice.update.UpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,13 +33,14 @@ class ShineVoiceApplication : Application() {
     val modelResolver by lazy { ModelDirectoryResolver(this) }
     val wavStorage by lazy { WavStorage(this) }
     val settingsStore by lazy { SettingsStore(this) }
+    val updateManager by lazy { UpdateManager(this, settingsStore, logger) }
     val minimaxConfig by lazy { MiniMaxConfig(this) }
     val minimaxApiClient by lazy { MiniMaxApiClient() }
     val audioImporter by lazy { ReferenceAudioImporter(this) }
     val database by lazy {
         Room.databaseBuilder(this, ShineVoiceDatabase::class.java, "shinevoice.db")
             .addMigrations(ShineVoiceDatabase.MIGRATION_1_2)
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            .addMigrations(ShineVoiceDatabase.MIGRATION_2_3)
             .build()
     }
     val historyRepository by lazy { RoomGenerationHistoryRepository(database.generationHistoryDao()) }

@@ -11,8 +11,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Switch
@@ -37,6 +41,8 @@ import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.audio.PlaybackRoute
 import com.shinevoice.data.settings.MiniMaxRegion
 import com.shinevoice.data.settings.ThemeMode
+import com.shinevoice.domain.tts.TtsLanguageCatalog
+import com.shinevoice.domain.tts.TtsVoice
 import com.shinevoice.ui.cyber.CyberButton
 import com.shinevoice.ui.cyber.CyberCard
 import com.shinevoice.ui.cyber.CyberChipState
@@ -50,6 +56,7 @@ import com.shinevoice.ui.cyber.CyberStatusChip
 import com.shinevoice.ui.cyber.CyberTextField
 import com.shinevoice.ui.cyber.CyberType
 import com.shinevoice.ui.cyber.LocalCyberColors
+import com.shinevoice.update.UpdateUiState
 import java.util.Locale
 
 /**
@@ -65,12 +72,20 @@ fun SettingsScreen(
     viewModel: MainViewModel,
     onRefresh: () -> Unit,
     onRunStability: () -> Unit,
+    updateState: UpdateUiState = UpdateUiState.Idle,
+    onCheckUpdate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as ShineVoiceApplication
     val colors = LocalCyberColors.current
     var showDiagnostics by remember { mutableStateOf(false) }
     var showImportModelHint by remember { mutableStateOf(false) }
+    var showSystemVoicePicker by remember { mutableStateOf(false) }
+    var expandedSystemVoiceGroups by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val systemVoiceGroups = remember(state.systemVoices) {
+        groupSystemVoices(state.systemVoices)
+    }
+    val selectedSystemVoice = state.systemVoices.firstOrNull { it.id == state.systemSelectedVoice }
     LaunchedEffect(Unit) {
         viewModel.loadMinimaxConfig()
         viewModel.refreshStorageStats()
@@ -216,20 +231,49 @@ fun SettingsScreen(
                 if (state.systemVoices.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "中文语音（${state.systemVoices.size} 个音色）",
+                        "系统语音（${state.systemVoices.size} 个可用音色）",
                         style = CyberType.terminalLabel,
                         color = colors.textMuted,
                     )
-                    state.systemVoices.forEach { voice ->
-                        CyberRadioRow(
-                            selected = state.systemSelectedVoice == voice.id,
-                            enabled = true,
-                            title = voice.displayName,
-                            onClick = { viewModel.selectSystemVoice(voice.id) },
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val defaultGroup = preferredSystemVoiceGroupKey(selectedSystemVoice, systemVoiceGroups)
+                                expandedSystemVoiceGroups = defaultGroup?.let(::setOf).orEmpty()
+                                showSystemVoicePicker = true
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                selectedSystemVoice?.displayName ?: "跟随引擎默认音色",
+                                fontSize = 13.sp,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                            )
+                            Text(
+                                selectedSystemVoice?.let { systemVoiceLanguageLabel(it.language, it.displayName) }
+                                    ?: "按语种分组选择 · 仅在需要时展开列表",
+                                style = CyberType.terminalLabel,
+                                color = colors.textMuted,
+                                maxLines = 1,
+                            )
+                        }
+                        CyberOutlinedButton(
+                            text = "选择音色  ▼",
+                            onClick = {
+                                val defaultGroup = preferredSystemVoiceGroupKey(selectedSystemVoice, systemVoiceGroups)
+                                expandedSystemVoiceGroups = defaultGroup?.let(::setOf).orEmpty()
+                                showSystemVoicePicker = true
+                            },
                         )
                     }
                     Text(
-                        "未指定语音时使用引擎默认语音；同一音色优先展示离线版，联网版仅在无离线实现时出现。",
+                        "列表来自当前设备引擎；同一语言优先展示离线版，联网版仅在无离线实现时出现。",
                         fontSize = 11.sp,
                         color = colors.textMuted,
                     )
@@ -434,8 +478,35 @@ fun SettingsScreen(
             CyberCard {
                 Text("SHINEVOICE", style = CyberType.sectionCode, color = colors.accent)
                 Spacer(Modifier.height(4.dp))
-                Text("版本 ${BuildConfig.VERSION_NAME}（正式版）", fontSize = 13.sp, color = colors.textPrimary)
-                Text("本地优先、云端增强的中文 AI 语音工作台。", fontSize = 11.sp, color = colors.textMuted)
+                Text("版本 V${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = colors.textPrimary)
+                Text("本地优先、云端增强的多语言语音工作台。", fontSize = 11.sp, color = colors.textMuted)
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("软件更新", fontWeight = FontWeight.Medium, color = colors.textPrimary)
+                        Text(
+                            when (updateState) {
+                                UpdateUiState.Checking -> "正在检查公开 Release……"
+                                is UpdateUiState.Latest -> "当前已是最新版本。"
+                                is UpdateUiState.Available -> "发现 V${updateState.candidate.metadata.versionName}。"
+                                is UpdateUiState.Failed -> updateState.message
+                                is UpdateUiState.Downloading -> "正在下载更新包……"
+                                is UpdateUiState.AwaitingInstall -> "更新包已校验，等待安装。"
+                                UpdateUiState.Installing -> "正在打开系统安装器……"
+                                UpdateUiState.Idle -> "检查 GitHub Releases 中的正式版本。"
+                            },
+                            fontSize = 11.sp,
+                            color = if (updateState is UpdateUiState.Failed) colors.danger else colors.textMuted,
+                            maxLines = 2,
+                        )
+                    }
+                    CyberOutlinedButton(
+                        text = "检查更新",
+                        onClick = onCheckUpdate,
+                        enabled = updateState !is UpdateUiState.Checking &&
+                            updateState !is UpdateUiState.Downloading,
+                    )
+                }
             }
         }
     }
@@ -454,7 +525,7 @@ fun SettingsScreen(
             },
         ) {
             Text(
-                "标准版已内置 ZipVoice 中文声音克隆模型：首次启动会自动解包到本机（约 200 MB），无需下载、离线可用。" +
+                "标准版已内置 ZipVoice 中英声音克隆模型：首次启动会自动解包到本机（约 200 MB），无需下载、离线可用。" +
                     "如需更换其他模型，可将其放到手机存储的应用专属目录 Android/data/com.shinevoice.debug/files/models/ 下，" +
                     "然后回到本页点击「重新检测」。",
                 fontSize = 12.sp,
@@ -462,6 +533,133 @@ fun SettingsScreen(
             )
         }
     }
+
+    if (showSystemVoicePicker) {
+        CyberDialog(
+            onDismissRequest = { showSystemVoicePicker = false },
+            title = "选择系统音色",
+            code = "SYSTEM VOICE SELECTOR",
+            modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp).heightIn(max = 680.dp),
+            actions = {
+                CyberOutlinedButton(text = "关闭", onClick = { showSystemVoicePicker = false })
+            },
+        ) {
+            Text(
+                "共 ${state.systemVoices.size} 个音色 · 点击语种标题展开/收起",
+                fontSize = 11.sp,
+                color = colors.textMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                systemVoiceGroups.forEach { group ->
+                    val expanded = group.key in expandedSystemVoiceGroups
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                expandedSystemVoiceGroups = if (expanded) {
+                                    expandedSystemVoiceGroups - group.key
+                                } else {
+                                    expandedSystemVoiceGroups + group.key
+                                }
+                            }
+                            .padding(vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            if (expanded) "−" else "+",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.accent,
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(group.label, fontWeight = FontWeight.Medium, color = colors.textPrimary)
+                            Text("${group.voices.size} 个音色", style = CyberType.terminalLabel, color = colors.textMuted)
+                        }
+                        Text(
+                            if (expanded) "收起" else "展开",
+                            style = CyberType.terminalLabel,
+                            color = colors.cyan,
+                        )
+                    }
+                    HorizontalDivider(color = colors.outline)
+                    if (expanded) {
+                        Column(Modifier.padding(start = 14.dp)) {
+                            group.voices.forEach { voice ->
+                                CyberRadioRow(
+                                    selected = state.systemSelectedVoice == voice.id,
+                                    enabled = true,
+                                    title = voice.displayName,
+                                    onClick = {
+                                        viewModel.selectSystemVoice(voice.id)
+                                        showSystemVoicePicker = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class SystemVoiceGroup(
+    val key: String,
+    val label: String,
+    val voices: List<TtsVoice>,
+)
+
+private fun groupSystemVoices(voices: List<TtsVoice>): List<SystemVoiceGroup> {
+    return voices
+        .groupBy(::systemVoiceGroupKey)
+        .map { (key, groupedVoices) ->
+            SystemVoiceGroup(
+                key = key,
+                label = groupedVoices.firstOrNull()?.let {
+                    systemVoiceLanguageLabel(it.language, it.displayName)
+                } ?: "其他",
+                voices = groupedVoices.sortedBy { it.displayName },
+            )
+        }
+        .sortedWith(compareBy({ it.key == "other" }, { it.label.lowercase(Locale.CHINA) }))
+}
+
+private fun preferredSystemVoiceGroupKey(
+    selectedVoice: TtsVoice?,
+    groups: List<SystemVoiceGroup>,
+): String? {
+    return selectedVoice?.let(::systemVoiceGroupKey)
+        ?: groups.firstOrNull {
+            it.key == TtsLanguageCatalog.ZH_CN.id || it.label == TtsLanguageCatalog.ZH_CN.displayName
+        }?.key
+        ?: groups.firstOrNull()?.key
+}
+
+private fun systemVoiceGroupKey(voice: TtsVoice): String {
+    voice.language?.trim()?.takeIf { it.isNotEmpty() }?.let { language ->
+        return TtsLanguageCatalog.find(language)?.id ?: language.lowercase(Locale.US)
+    }
+    // Older/third-party engines may not expose a locale. Their display name
+    // still starts with a human language label, which is a useful grouping key.
+    return voice.displayName.substringBefore(" ").trim().ifBlank { "other" }.lowercase(Locale.CHINA)
+}
+
+private fun systemVoiceLanguageLabel(languageId: String?, displayName: String): String {
+    TtsLanguageCatalog.find(languageId)?.let { language ->
+        return if (language.nativeName == language.displayName) {
+            language.displayName
+        } else {
+            "${language.displayName} · ${language.nativeName}"
+        }
+    }
+    return displayName.substringBefore(" ").trim().ifBlank { "其他" }
 }
 
 /** Terminal radio row: neon square indicator + title/subtitle. */

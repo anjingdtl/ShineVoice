@@ -41,6 +41,9 @@ class ProviderRegistry(private val logger: AppLogger) {
 
     fun snapshots(): List<ProviderSnapshot> = states.values.sortedBy { it.id }
 
+    suspend fun capabilities(providerId: String): TtsCapabilities? =
+        get(providerId)?.let { provider -> runCatching { provider.getCapabilities() }.getOrNull() }
+
     suspend fun initialize(providerId: String): ProviderResult {
         val provider = get(providerId) ?: return ProviderResult.failure(
             TtsError(

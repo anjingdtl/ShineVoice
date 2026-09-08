@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [VoiceProfileEntity::class, GenerationHistoryEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class ShineVoiceDatabase : RoomDatabase() {
@@ -38,6 +38,18 @@ abstract class ShineVoiceDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "ALTER TABLE voice_profiles ADD COLUMN lastUsedAt INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /** v2 -> v3: retain every generation row and add task parameters. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN language TEXT",
+                )
+                db.execSQL(
+                    "ALTER TABLE generation_history ADD COLUMN speed REAL NOT NULL DEFAULT 1.0",
                 )
             }
         }

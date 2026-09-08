@@ -32,6 +32,8 @@ class RoomGenerationHistoryRepository(
                 success = result.success,
                 errorCode = result.error?.code?.name,
                 errorMessage = result.error?.userMessage,
+                language = request.language,
+                speed = request.speed,
             ),
         )
     }

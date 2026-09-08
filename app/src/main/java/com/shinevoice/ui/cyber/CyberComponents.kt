@@ -221,8 +221,8 @@ fun CyberPageHeader(
 @Composable
 fun CyberStatusChip(
     text: String,
-    state: CyberChipState = CyberChipState.INFO,
     modifier: Modifier = Modifier,
+    state: CyberChipState = CyberChipState.INFO,
     pulse: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {

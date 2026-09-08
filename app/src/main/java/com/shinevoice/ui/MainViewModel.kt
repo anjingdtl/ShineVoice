@@ -12,11 +12,14 @@ import com.shinevoice.data.db.GenerationHistoryEntity
 import com.shinevoice.data.db.VoiceProfileEntity
 import com.shinevoice.data.settings.ThemeMode
 import com.shinevoice.domain.voice.VoiceReferenceStatus
+import com.shinevoice.domain.tts.TtsLanguage
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
+import com.shinevoice.update.UpdateUiState
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,8 +77,15 @@ data class StorageStats(
 }
 
 data class MainUiState(
-    val targetText: String = "世恒哥，这是 ShineVoice 的本地中文声音克隆测试。",
+    val targetText: String = "世恒哥，这是 ShineVoice 的语音生成测试。",
     val speed: Float = 1.0f,
+    val selectedLanguage: String = TtsLanguageCatalog.ZH_CN.id,
+    val availableLanguages: List<TtsLanguage> = listOf(
+        TtsLanguageCatalog.ZH_CN,
+        TtsLanguageCatalog.EN_US,
+    ),
+    val isLanguagePickerOpen: Boolean = false,
+    val languageHint: String? = null,
     val modelStatus: ZipVoiceModelStatus? = null,
     val referenceStatus: VoiceReferenceStatus? = null,
     val currentVoice: VoiceProfileEntity? = null,
@@ -110,6 +120,7 @@ data class MainUiState(
     val playbackRoute: PlaybackRoute = PlaybackRoute.SPEAKER,
     val storageStats: StorageStats? = null,
     val message: String? = null,
+    val updateState: UpdateUiState = UpdateUiState.Idle,
 )
 
 class MainViewModel(
@@ -154,11 +165,18 @@ class MainViewModel(
                 }
             }
         }
+        viewModelScope.launch {
+            application.updateManager.state.collectLatest { updateState ->
+                _uiState.update { it.copy(updateState = updateState) }
+            }
+        }
         // Cloud config must be restored on startup: the create page gates the
         // 云端高清 button on minimaxStatus, which previously only refreshed
         // when the user opened 设置 (bug: restart + direct cloud use failed).
         loadMinimaxConfig()
         loadSystemTtsState()
+        loadGenerationPreferences()
+        refreshAvailableLanguages()
         refreshModelAndInitialize()
     }
 
@@ -167,7 +185,75 @@ class MainViewModel(
     }
 
     fun onSpeedChanged(value: Float) {
-        _uiState.update { it.copy(speed = value.coerceIn(0.5f, 2.0f)) }
+        val speed = value.coerceIn(0.5f, 2.0f)
+        _uiState.update { it.copy(speed = speed) }
+        viewModelScope.launch { application.settingsStore.setSpeechRate(speed) }
+    }
+
+    fun onLanguageChanged(languageId: String) {
+        val selected = _uiState.value.availableLanguages.firstOrNull { it.id == languageId } ?: return
+        _uiState.update { it.copy(selectedLanguage = selected.id, languageHint = null) }
+        viewModelScope.launch { application.settingsStore.setGenerationLanguage(selected.id) }
+    }
+
+    fun setLanguagePickerOpen(open: Boolean) {
+        _uiState.update { it.copy(isLanguagePickerOpen = open) }
+    }
+
+    fun checkForUpdate(force: Boolean = true) {
+        viewModelScope.launch { application.updateManager.checkForUpdate(force = force) }
+    }
+
+    fun downloadAndInstallUpdate() {
+        viewModelScope.launch { application.updateManager.downloadAndInstall() }
+    }
+
+    fun resumePendingUpdateInstall() {
+        viewModelScope.launch { application.updateManager.resumePendingInstall() }
+    }
+
+    fun dismissUpdate() {
+        application.updateManager.dismiss()
+    }
+
+    /** Provider capabilities drive the language selector and safe fallbacks. */
+    fun refreshAvailableLanguages(providerId: String = _uiState.value.selectedProviderId) {
+        viewModelScope.launch {
+            val capabilities = application.providerRegistry.capabilities(providerId)
+            val supportedIds = capabilities?.supportedLanguages.orEmpty()
+            val languages = TtsLanguageCatalog.all.filter { it.id in supportedIds }
+            val current = _uiState.value.selectedLanguage
+            val next = chooseLanguageFallback(current, languages)
+            _uiState.update {
+                it.copy(
+                    availableLanguages = languages,
+                    selectedLanguage = next,
+                    languageHint = if (current != next && languages.isNotEmpty()) {
+                        "当前生成方式不支持${TtsLanguageCatalog.displayName(current)}，已切换为${TtsLanguageCatalog.displayName(next)}。"
+                    } else {
+                        it.languageHint
+                    },
+                )
+            }
+            if (next != current) application.settingsStore.setGenerationLanguage(next)
+        }
+    }
+
+    private fun chooseLanguageFallback(current: String, available: List<TtsLanguage>): String {
+        if (available.any { it.id == current }) return current
+        return available.firstOrNull { it.id == TtsLanguageCatalog.ZH_CN.id }?.id
+            ?: available.firstOrNull { it.id == TtsLanguageCatalog.AUTO.id }?.id
+            ?: available.firstOrNull()?.id
+            ?: TtsLanguageCatalog.ZH_CN.id
+    }
+
+    private fun loadGenerationPreferences() {
+        viewModelScope.launch {
+            val language = application.settingsStore.generationLanguage.first()
+            val speed = application.settingsStore.speechRate.first()
+            _uiState.update { it.copy(selectedLanguage = language, speed = speed) }
+            refreshAvailableLanguages()
+        }
     }
 
     fun refreshModelAndInitialize() {
@@ -179,7 +265,12 @@ class MainViewModel(
                 else -> "本地模型校验未通过，请到「设置 → 高级 → 开发与诊断」查看。"
             }
             _uiState.update { it.copy(modelStatus = status, message = userMessage) }
-            if (status.ready) initializeProvider(showMessage = false)
+            if (status.ready) {
+                initializeProvider(
+                    providerId = SherpaZipVoiceProvider.PROVIDER_ID,
+                    showMessage = false,
+                )
+            }
         }
     }
 
@@ -251,7 +342,7 @@ class MainViewModel(
         val snapshot = _uiState.value
         if (snapshot.isGenerating || snapshot.stabilityRunning) return
         if (snapshot.targetText.isBlank()) {
-            _uiState.update { it.copy(message = "请输入需要生成的中文文本。") }
+            _uiState.update { it.copy(message = "请输入需要生成的文字。") }
             return
         }
         val voice = snapshot.currentVoice
@@ -285,7 +376,7 @@ class MainViewModel(
             _uiState.update { it.copy(isGenerating = true, message = "正在生成…") }
             val result = withContext(Dispatchers.Default) {
                 if (_uiState.value.selectedProviderId != AndroidSystemTtsProvider.PROVIDER_ID) {
-                    ensureInitialized()
+                    ensureInitialized(snapshot.selectedProviderId)
                 }
                 application.ttsManager.synthesize(newRequest(snapshot))
             }
@@ -313,7 +404,9 @@ class MainViewModel(
     }
 
     fun onSelectProvider(providerId: String) {
-        _uiState.update { it.copy(selectedProviderId = providerId) }
+        if (application.providerRegistry.get(providerId) == null) return
+        _uiState.update { it.copy(selectedProviderId = providerId, providerInitialized = false) }
+        refreshAvailableLanguages(providerId)
     }
 
     fun onThemeModeChanged(mode: ThemeMode) {
@@ -438,7 +531,7 @@ class MainViewModel(
             val results = mutableListOf<TtsResult>()
             repeat(STABILITY_ATTEMPTS) { index ->
                 val result = withContext(Dispatchers.Default) {
-                    ensureInitialized()
+                    ensureInitialized(SherpaZipVoiceProvider.PROVIDER_ID)
                     application.ttsManager.synthesize(
                         newRequest(
                             _uiState.value.copy(selectedProviderId = SherpaZipVoiceProvider.PROVIDER_ID),
@@ -486,13 +579,16 @@ class MainViewModel(
         }
     }
 
-    private suspend fun ensureInitialized() {
-        if (!_uiState.value.providerInitialized) initializeProvider(showMessage = false)
+    private suspend fun ensureInitialized(providerId: String) {
+        if (!_uiState.value.providerInitialized) initializeProvider(providerId = providerId, showMessage = false)
     }
 
-    private suspend fun initializeProvider(showMessage: Boolean) {
+    private suspend fun initializeProvider(
+        providerId: String = _uiState.value.selectedProviderId,
+        showMessage: Boolean,
+    ) {
         val result = withContext(Dispatchers.Default) {
-            application.ttsManager.initialize(SherpaZipVoiceProvider.PROVIDER_ID)
+            application.ttsManager.initialize(providerId)
         }
         _uiState.update {
             it.copy(
@@ -512,6 +608,7 @@ class MainViewModel(
                 providerId = MiniMaxProvider.PROVIDER_ID,
                 voiceProfileId = voice?.id,
                 voiceId = voice?.minimaxVoiceId,
+                language = state.selectedLanguage,
                 speed = state.speed,
             )
             AndroidSystemTtsProvider.PROVIDER_ID -> TtsRequest(
@@ -520,6 +617,7 @@ class MainViewModel(
                 providerId = AndroidSystemTtsProvider.PROVIDER_ID,
                 voiceProfileId = voice?.id,
                 voiceId = voice?.androidTtsVoice ?: state.systemSelectedVoice,
+                language = state.selectedLanguage,
                 speed = state.speed,
                 pitch = 1.0f,
                 extra = voice?.androidTtsEngine?.takeIf { it.isNotBlank() }
@@ -532,6 +630,7 @@ class MainViewModel(
                 providerId = SherpaZipVoiceProvider.PROVIDER_ID,
                 voiceProfileId = voice?.id ?: DEFAULT_VOICE_PROFILE_ID,
                 voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
+                language = state.selectedLanguage,
                 speed = state.speed,
                 extra = mapOf(
                     SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to
@@ -554,7 +653,7 @@ class MainViewModel(
         application.providerRegistry.get(AndroidSystemTtsProvider.PROVIDER_ID)
             as? com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
 
-    /** Loads installed TTS engines, the persisted choice, and its Chinese voices. */
+    /** Loads installed TTS engines, the persisted choice, and real engine voices. */
     fun loadSystemTtsState() {
         viewModelScope.launch {
             val engines = systemTtsProvider()?.availableEngines() ?: emptyList()
@@ -604,12 +703,15 @@ class MainViewModel(
                 systemVoices = voices,
                 systemSelectedVoice = persisted?.takeIf { v -> voices.any { it.id == v } },
                 systemStatus = it.systemStatus.ifBlank {
-                    "已就绪（${voices.size} 个中文语音）"
+                    "已就绪（${voices.size} 个系统语音）"
                 },
             )
         }
         // enginePackage is intentionally the source of this refresh; kept for logs.
         application.logger.i("SystemTTS voices loaded engine=${enginePackage ?: "default"} count=${voices.size}")
+        if (_uiState.value.selectedProviderId == AndroidSystemTtsProvider.PROVIDER_ID) {
+            refreshAvailableLanguages(AndroidSystemTtsProvider.PROVIDER_ID)
+        }
     }
 
     /** Binds a system engine + voice to a voice profile (系统 Binding). */

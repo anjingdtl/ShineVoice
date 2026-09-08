@@ -12,6 +12,7 @@ import com.shinevoice.domain.tts.TtsProvider
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.domain.tts.TtsVoice
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import java.io.File
 import kotlinx.coroutines.CancellationException
 
@@ -35,6 +36,11 @@ class SherpaZipVoiceProvider(
         supportsEmotion = false,
         supportsFileOutput = true,
         supportedFormats = setOf(AudioFormat.WAV_PCM_16),
+        supportedLanguages = setOf(TtsLanguageCatalog.ZH_CN.id, TtsLanguageCatalog.EN_US.id),
+        supportsAutoLanguage = false,
+        minSpeed = 0.5f,
+        maxSpeed = 2.0f,
+        defaultSpeed = 1.0f,
     )
 
     override suspend fun getVoices(): List<TtsVoice> = listOf(
@@ -87,7 +93,10 @@ class SherpaZipVoiceProvider(
             return failure(request, elapsed(startedAt), TtsErrorCode.UnsupportedFormat, "Phase 1 只输出 WAV PCM 16-bit。")
         }
         if (request.text.isBlank()) {
-            return failure(request, elapsed(startedAt), TtsErrorCode.EmptyText, "请输入需要生成的中文文本。")
+            return failure(request, elapsed(startedAt), TtsErrorCode.EmptyText, "请输入需要生成的文字。")
+        }
+        if (request.language != null && request.language !in getCapabilities().supportedLanguages) {
+            return failure(request, elapsed(startedAt), TtsErrorCode.UnsupportedLanguage, "本地模型暂不支持所选语言。")
         }
         val referenceText = request.extra[EXTRA_REFERENCE_TEXT].orEmpty()
         if (referenceText.isBlank()) {

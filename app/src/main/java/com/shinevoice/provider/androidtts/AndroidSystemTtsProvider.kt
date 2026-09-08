@@ -14,6 +14,7 @@ import com.shinevoice.domain.tts.ProviderResult
 import com.shinevoice.domain.tts.TtsCapabilities
 import com.shinevoice.domain.tts.TtsError
 import com.shinevoice.domain.tts.TtsErrorCode
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.domain.tts.TtsProvider
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
@@ -37,9 +38,9 @@ data class SystemEngineInfo(
 /**
  * Android System TTS provider. Enumerates installed engines, lets the user
  * pick one (persisted in SettingsStore), initializes TextToSpeech with the
- * chosen engine, and enumerates that engine's Chinese voices. The voice used
- * for synthesis can come from the VoiceProfile's system binding or the global
- * default. UI label: 系统语音.
+ * chosen engine, and enumerates that engine's voices by their real Locale.
+ * The voice used for synthesis can come from the VoiceProfile's system
+ * binding or the best voice for the requested language. UI label: 系统语音.
  */
 class AndroidSystemTtsProvider(
     private val context: Context,
@@ -122,7 +123,7 @@ class AndroidSystemTtsProvider(
                         if (ready != null) {
                             tts = ready
                             currentEnginePackage = enginePackage
-                            selectChineseVoice(ready)
+                            selectDefaultVoice(ready)
                             cont.resume(ProviderResult.ok("系统语音已就绪"))
                         } else {
                             cont.resume(
@@ -151,25 +152,12 @@ class AndroidSystemTtsProvider(
             }
         }
 
-    private fun selectChineseVoice(tts: TextToSpeech) {
+    private fun selectDefaultVoice(tts: TextToSpeech) {
         runCatching {
-            val candidates = buildList {
-                add(Locale.CHINA)
-                add(Locale.CHINESE)
-                add(Locale.SIMPLIFIED_CHINESE)
-            }
-            for (locale in candidates) {
-                when (tts.isLanguageAvailable(locale)) {
-                    TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE,
-                    TextToSpeech.LANG_COUNTRY_AVAILABLE,
-                    TextToSpeech.LANG_AVAILABLE,
-                    -> {
-                        tts.language = locale
-                        return
-                    }
-                }
-            }
-        }.onFailure { logger.w("Could not select Chinese voice", it) }
+            val current = tts.voice
+            if (current != null) return@runCatching
+            tts.voices.orEmpty().firstOrNull()?.let { tts.voice = it }
+        }.onFailure { logger.w("Could not select default system voice", it) }
     }
 
     /**
@@ -178,7 +166,10 @@ class AndroidSystemTtsProvider(
      * requires a network connection is reported as not offline-capable.
      */
     override suspend fun getCapabilities(): TtsCapabilities {
-        val engine = tts ?: return TtsCapabilities(
+        val engine = tts ?: run {
+            initialize()
+            tts
+        } ?: return TtsCapabilities(
             supportsVoiceClone = false,
             supportsOffline = false,
             supportsStreaming = false,
@@ -187,6 +178,7 @@ class AndroidSystemTtsProvider(
             supportsEmotion = false,
             supportsFileOutput = true,
             supportedFormats = setOf(AudioFormat.WAV_PCM_16),
+            supportedLanguages = emptySet(),
         )
         val selectedVoice = runCatching { engine.voice }.getOrNull()
         val supportsOffline = selectedVoice?.let { !it.isNetworkConnectionRequired } ?: false
@@ -199,11 +191,16 @@ class AndroidSystemTtsProvider(
             supportsEmotion = false,
             supportsFileOutput = true,
             supportedFormats = setOf(AudioFormat.WAV_PCM_16),
+            supportedLanguages = availableLanguageIds(engine),
+            supportsAutoLanguage = false,
+            minSpeed = 0.5f,
+            maxSpeed = 2.0f,
+            defaultSpeed = 1.0f,
         )
     }
 
     /**
-     * Chinese voices of the current engine (initializing it if needed).
+     * Voices of the current engine (initializing it if needed).
      *
      * Engines like Google expose every voice variant twice (offline `-local`
      * and online `-network` twins, e.g. cmn-cn-x-ccc-local/-network), which
@@ -217,27 +214,35 @@ class AndroidSystemTtsProvider(
             if (!init.success) return emptyList()
         }
         return runCatching {
-            chineseVoicesOf(tts)
-                .groupBy { voiceVariantCode(it) }
+            voicesOf(tts)
+                .groupBy { "${it.locale.toLanguageTag()}#${voiceVariantCode(it)}" }
                 .values
                 .mapNotNull { group -> group.minByOrNull { it.isNetworkConnectionRequired } }
                 .map { voice ->
                     TtsVoice(
                         id = voice.name,
                         displayName = voiceDisplayName(voice),
-                        language = voice.locale.toLanguageTag(),
+                        language = localeToLanguageId(voice.locale),
                     )
                 }
                 .sortedBy { it.id }
         }.getOrDefault(emptyList())
     }
 
-    private fun chineseVoicesOf(engine: TextToSpeech?): List<AndroidVoice> =
+    /** Returns the current engine's voices for a requested app language. */
+    suspend fun getVoicesForLanguage(languageId: String?): List<TtsVoice> {
+        val requested = TtsLanguageCatalog.find(languageId) ?: return getVoices()
+        return getVoices().filter { voice ->
+            TtsLanguageCatalog.sameLanguageFamily(voice.language, requested.id)
+        }
+    }
+
+    /** Actual language ids represented by the selected engine's voice list. */
+    fun availableLanguageIds(engine: TextToSpeech? = tts): Set<String> =
+        voicesOf(engine).mapNotNull { localeToLanguageId(it.locale) }.toSet()
+
+    private fun voicesOf(engine: TextToSpeech?): List<AndroidVoice> =
         engine?.voices.orEmpty()
-            .filter { voice ->
-                val language = voice.locale.language
-                language == "zh" || language == "cmn"
-            }
             .sortedBy { it.name }
 
     /** "cmn-cn-x-ccc-local" -> "ccc"; unparseable names keep their full form. */
@@ -248,12 +253,78 @@ class AndroidSystemTtsProvider(
     }
 
     private fun voiceDisplayName(voice: AndroidVoice): String {
+        val language = TtsLanguageCatalog.find(localeToLanguageId(voice.locale))?.displayName
+            ?: voice.locale.displayLanguage
         val code = voiceVariantCode(voice).uppercase(java.util.Locale.US)
         return if (voice.isNetworkConnectionRequired) {
-            "中文音色 $code（联网）"
+            "$language $code（联网）"
         } else {
-            "中文音色 $code（离线）"
+            "$language $code（离线）"
         }
+    }
+
+    private fun localeToLanguageId(locale: Locale): String? {
+        val tag = locale.toLanguageTag()
+        TtsLanguageCatalog.all.firstOrNull { it.id.equals(tag, ignoreCase = true) }?.let { return it.id }
+        val family = when (locale.language.lowercase(Locale.US)) {
+            "cmn", "zho", "zh" -> TtsLanguageCatalog.ZH_CN.id
+            "yue" -> TtsLanguageCatalog.ZH_HK.id
+            "eng", "en" -> TtsLanguageCatalog.EN_US.id
+            "jpn", "ja" -> TtsLanguageCatalog.JA_JP.id
+            "kor", "ko" -> TtsLanguageCatalog.KO_KR.id
+            "fra", "fre", "fr" -> TtsLanguageCatalog.FR_FR.id
+            "deu", "ger", "de" -> TtsLanguageCatalog.DE_DE.id
+            "spa", "es" -> TtsLanguageCatalog.ES_ES.id
+            "por", "pt" -> TtsLanguageCatalog.PT_PT.id
+            "rus", "ru" -> TtsLanguageCatalog.RU_RU.id
+            "ara", "ar" -> TtsLanguageCatalog.AR_SA.id
+            "tha", "th" -> TtsLanguageCatalog.TH_TH.id
+            "vie", "vi" -> TtsLanguageCatalog.VI_VN.id
+            "ind", "id" -> TtsLanguageCatalog.ID_ID.id
+            "ita", "it" -> TtsLanguageCatalog.IT_IT.id
+            "tur", "tr" -> TtsLanguageCatalog.TR_TR.id
+            "nld", "dut", "nl" -> TtsLanguageCatalog.NL_NL.id
+            "ukr", "uk" -> TtsLanguageCatalog.UK_UA.id
+            "pol", "pl" -> TtsLanguageCatalog.PL_PL.id
+            "hin", "hi" -> TtsLanguageCatalog.HI_IN.id
+            "bul", "bg" -> TtsLanguageCatalog.BG_BG.id
+            "dan", "da" -> TtsLanguageCatalog.DA_DK.id
+            "heb", "iw", "he" -> TtsLanguageCatalog.HE_IL.id
+            "msa", "may", "ms" -> TtsLanguageCatalog.MS_MY.id
+            "fas", "per", "fa" -> TtsLanguageCatalog.FA_IR.id
+            "slk", "slo", "sk" -> TtsLanguageCatalog.SK_SK.id
+            "swe", "sv" -> TtsLanguageCatalog.SV_SE.id
+            "hrv", "hr" -> TtsLanguageCatalog.HR_HR.id
+            "fil" -> TtsLanguageCatalog.FIL_PH.id
+            "hun", "hu" -> TtsLanguageCatalog.HU_HU.id
+            "nob", "nor", "nb" -> TtsLanguageCatalog.NB_NO.id
+            "slv", "sl" -> TtsLanguageCatalog.SL_SI.id
+            "cat", "ca" -> TtsLanguageCatalog.CA_ES.id
+            "nno", "nn" -> TtsLanguageCatalog.NN_NO.id
+            "tam", "ta" -> TtsLanguageCatalog.TA_IN.id
+            "afr", "af" -> TtsLanguageCatalog.AF_ZA.id
+            else -> null
+        }
+        return family
+    }
+
+    private fun selectVoiceForLanguage(
+        engine: TextToSpeech,
+        languageId: String?,
+        preferredVoiceId: String?,
+    ): AndroidVoice? {
+        val voices = voicesOf(engine)
+        if (languageId == null) {
+            return preferredVoiceId?.let { id -> voices.firstOrNull { it.name == id } }
+                ?: engine.voice
+                ?: voices.firstOrNull()
+        }
+        val exact = voices.filter { localeToLanguageId(it.locale) == languageId }
+        val family = exact.ifEmpty {
+            voices.filter { TtsLanguageCatalog.sameLanguageFamily(localeToLanguageId(it.locale), languageId) }
+        }
+        return preferredVoiceId?.let { id -> family.firstOrNull { it.name == id } }
+            ?: family.minByOrNull { it.isNetworkConnectionRequired }
     }
 
     override suspend fun validateConfig(): ProviderResult {
@@ -283,8 +354,18 @@ class AndroidSystemTtsProvider(
         }
         val current = tts ?: return failure(request, startedAt, TtsErrorCode.SystemTtsError, "系统语音不可用")
         if (request.text.isBlank()) {
-            return failure(request, startedAt, TtsErrorCode.EmptyText, "请输入需要朗读的中文文本。")
+            return failure(request, startedAt, TtsErrorCode.EmptyText, "请输入需要朗读的文字。")
         }
+
+        val requestedLanguage = request.language?.let(TtsLanguageCatalog::normalize)
+        val selectedVoice = selectVoiceForLanguage(current, requestedLanguage, request.voiceId)
+        if (requestedLanguage != null && selectedVoice == null) {
+            return failure(request, startedAt, TtsErrorCode.UnsupportedLanguage, "当前系统语音引擎不支持所选语言。")
+        }
+        selectedVoice?.let { voice ->
+            runCatching { current.voice = voice }
+        }
+        val selectedVoiceId = selectedVoice?.name ?: request.voiceId
 
         val output = wavStorage.generatedFile(request.taskId)
         val params = Bundle().apply {
@@ -322,7 +403,7 @@ class AndroidSystemTtsProvider(
                                 audioFile = output.absolutePath,
                                 sampleRate = 24000,
                                 model = null,
-                                voiceId = request.voiceId,
+                                voiceId = selectedVoiceId,
                                 elapsedMs = elapsed,
                                 durationMs = wavDurationMs(output),
                             ),
@@ -340,9 +421,6 @@ class AndroidSystemTtsProvider(
             }
             runCatching {
                 current.setOnUtteranceProgressListener(listener)
-                request.voiceId?.let { requested ->
-                    current.voices.firstOrNull { it.name == requested }?.let { current.voice = it }
-                }
                 val started = current.synthesizeToFile(request.text, params, output, request.taskId)
                 if (started != TextToSpeech.SUCCESS) {
                     if (cont.isActive) {

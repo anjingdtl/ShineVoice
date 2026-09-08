@@ -3,6 +3,8 @@ package com.shinevoice.data.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.shinevoice.core.audio.PlaybackRoute
@@ -31,6 +33,9 @@ class SettingsStore(private val context: Context) {
     private val systemTtsVoiceKey = stringPreferencesKey("system_tts_voice")
     private val activeLocalModelKey = stringPreferencesKey("active_local_model")
     private val playbackRouteKey = stringPreferencesKey("playback_route")
+    private val generationLanguageKey = stringPreferencesKey("generation_language")
+    private val speechRateKey = floatPreferencesKey("speech_rate")
+    private val updateLastCheckAtKey = longPreferencesKey("update_last_check_at")
 
     val autoSave: Flow<Boolean> = context.shineVoiceDataStore.data.map { preferences ->
         preferences[autoSaveKey] ?: false
@@ -80,9 +85,42 @@ class SettingsStore(private val context: Context) {
         PlaybackRoute.fromName(preferences[playbackRouteKey])
     }
 
+    /** Last selected output language, persisted independently of the provider. */
+    val generationLanguage: Flow<String> = context.shineVoiceDataStore.data.map { preferences ->
+        preferences[generationLanguageKey] ?: "zh-CN"
+    }
+
+    /** Last selected speech rate; clamped at the state boundary as well. */
+    val speechRate: Flow<Float> = context.shineVoiceDataStore.data.map { preferences ->
+        (preferences[speechRateKey] ?: 1.0f).coerceIn(0.5f, 2.0f)
+    }
+
+    /** Timestamp used only for the automatic 24-hour update-check throttle. */
+    val updateLastCheckAt: Flow<Long> = context.shineVoiceDataStore.data.map { preferences ->
+        preferences[updateLastCheckAtKey] ?: 0L
+    }
+
     suspend fun setPlaybackRoute(route: PlaybackRoute) {
         context.shineVoiceDataStore.edit { preferences ->
             preferences[playbackRouteKey] = route.storedName
+        }
+    }
+
+    suspend fun setGenerationLanguage(languageId: String) {
+        context.shineVoiceDataStore.edit { preferences ->
+            preferences[generationLanguageKey] = languageId
+        }
+    }
+
+    suspend fun setSpeechRate(rate: Float) {
+        context.shineVoiceDataStore.edit { preferences ->
+            preferences[speechRateKey] = rate.coerceIn(0.5f, 2.0f)
+        }
+    }
+
+    suspend fun setUpdateLastCheckAt(timestampMs: Long) {
+        context.shineVoiceDataStore.edit { preferences ->
+            preferences[updateLastCheckAtKey] = timestampMs
         }
     }
 

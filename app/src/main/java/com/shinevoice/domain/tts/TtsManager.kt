@@ -27,7 +27,7 @@ class TtsManager(
             return@withLock TtsResult.failure(request.taskId, request.providerId, 0L, error)
         }
         if (request.text.isBlank()) {
-            val error = TtsError(TtsErrorCode.EmptyText, "请输入需要生成的中文文本。")
+            val error = TtsError(TtsErrorCode.EmptyText, "请输入需要生成的文字。")
             return@withLock TtsResult.failure(request.taskId, request.providerId, 0L, error)
         }
 

@@ -19,7 +19,7 @@ data class ModelProfile(
     val engine: String,
     val version: String,
     val path: String,
-    /** Capability tags: "zh", "offline", "voice-clone", "speed". */
+    /** Capability tags: BCP-47 ids plus "offline", "voice-clone", "speed". */
     val capabilities: Set<String>,
     val installed: Boolean,
     val active: Boolean,
@@ -53,11 +53,11 @@ class LocalModelRegistry(
     private val descriptors: List<ModelDescriptor> = listOf(
         ModelDescriptor(
             id = ModelDirectoryResolver.ZIPVOICE_MODEL_ID,
-            displayName = "ZipVoice 中文声音克隆（INT8）",
+            displayName = "ZipVoice 中英声音克隆（INT8）",
             engine = "sherpa-onnx+zipvoice",
             version = "v1",
             rootRelativePath = "models/zipvoice",
-            capabilities = setOf("zh", "en", "offline", "voice-clone", "speed"),
+            capabilities = setOf("zh-CN", "en-US", "offline", "voice-clone", "speed"),
         ),
     )
 

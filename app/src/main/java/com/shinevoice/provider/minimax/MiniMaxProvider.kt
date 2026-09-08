@@ -15,6 +15,7 @@ import com.shinevoice.domain.tts.TtsVoice
 import com.shinevoice.domain.tts.VoiceCloneProvider
 import com.shinevoice.domain.tts.VoiceCloneRequest
 import com.shinevoice.domain.tts.VoiceCloneResult
+import com.shinevoice.domain.tts.TtsLanguageCatalog
 import java.io.File
 import java.security.SecureRandom
 import kotlinx.coroutines.flow.first
@@ -63,13 +64,18 @@ class MiniMaxProvider(
         supportsEmotion = false,
         supportsFileOutput = true,
         supportedFormats = setOf(AudioFormat.WAV_PCM_16),
+        supportedLanguages = MiniMaxLanguageMapper.supportedLanguageIds,
+        supportsAutoLanguage = true,
+        minSpeed = 0.5f,
+        maxSpeed = 2.0f,
+        defaultSpeed = 1.0f,
     )
 
     override suspend fun getVoices(): List<TtsVoice> {
         val cred = credentials() ?: return emptyList()
         return apiClient.listVoices(cred.apiKey, cred.baseUrl, cred.groupId)
             .getOrDefault(emptyList())
-            .map { TtsVoice(id = it.voiceId, displayName = it.name, language = "zh-CN") }
+            .map { TtsVoice(id = it.voiceId, displayName = it.name, language = null) }
     }
 
     override suspend fun validateConfig(): ProviderResult {
@@ -102,7 +108,11 @@ class MiniMaxProvider(
             "尚未配置云端服务，请在设置中填写 API Key。",
         )
         if (request.text.isBlank()) {
-            return failure(request, startedAt, TtsErrorCode.EmptyText, "请输入需要生成的中文文本。")
+            return failure(request, startedAt, TtsErrorCode.EmptyText, "请输入需要生成的文字。")
+        }
+        val languageId = request.language?.let(TtsLanguageCatalog::normalize)
+        if (languageId != null && languageId !in MiniMaxLanguageMapper.supportedLanguageIds) {
+            return failure(request, startedAt, TtsErrorCode.UnsupportedLanguage, "云端暂不支持所选语言。")
         }
         val voiceId = request.voiceId?.takeIf { it.isNotBlank() }
             ?: config.defaultVoiceId.first()
@@ -120,6 +130,7 @@ class MiniMaxProvider(
             voiceId = voiceId,
             text = request.text,
             speed = request.speed,
+            languageBoost = MiniMaxLanguageMapper.toLanguageBoost(languageId),
             outputFile = output,
         ).fold(
             onSuccess = {

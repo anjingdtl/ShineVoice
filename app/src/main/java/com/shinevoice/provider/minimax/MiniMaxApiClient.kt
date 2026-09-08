@@ -165,31 +165,17 @@ class MiniMaxApiClient(
         voiceId: String,
         text: String,
         speed: Float,
+        languageBoost: String? = null,
         outputFile: File,
         model: String = DEFAULT_MODEL,
     ): Result<File> = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("model", model)
-            .put("text", text)
-            .put("stream", false)
-            .put("output_format", "url")
-            .put(
-                "voice_setting",
-                JSONObject()
-                    .put("voice_id", voiceId)
-                    .put("speed", speed.coerceIn(0.5f, 2.0f).toDouble())
-                    .put("vol", 1.0)
-                    .put("pitch", 0),
-            )
-            .put(
-                "audio_setting",
-                JSONObject()
-                    .put("sample_rate", 24000)
-                    .put("bitrate", 128000)
-                    .put("format", "wav")
-                    .put("channel", 1),
-            )
-            .toString()
+        val body = buildSynthesisPayload(
+            model = model,
+            text = text,
+            voiceId = voiceId,
+            speed = speed,
+            languageBoost = languageBoost,
+        ).toString()
             .toRequestBody(jsonType)
         runCatching {
             val response = client.newCall(
@@ -273,6 +259,36 @@ class MiniMaxApiClient(
 
         /** Clone audio limits from the official guide: mp3/m4a/wav, 10 s ~ 5 min, <= 20 MB. */
         const val MAX_UPLOAD_BYTES = 20L * 1024 * 1024
+
+        /** Pure request builder used by the provider and contract tests. */
+        internal fun buildSynthesisPayload(
+            model: String,
+            text: String,
+            voiceId: String,
+            speed: Float,
+            languageBoost: String?,
+        ): JSONObject = JSONObject()
+            .put("model", model)
+            .put("text", text)
+            .put("stream", false)
+            .put("output_format", "url")
+            .apply { putOpt("language_boost", languageBoost?.takeIf { it.isNotBlank() }) }
+            .put(
+                "voice_setting",
+                JSONObject()
+                    .put("voice_id", voiceId)
+                    .put("speed", speed.coerceIn(0.5f, 2.0f).toDouble())
+                    .put("vol", 1.0)
+                    .put("pitch", 0),
+            )
+            .put(
+                "audio_setting",
+                JSONObject()
+                    .put("sample_rate", 24000)
+                    .put("bitrate", 128000)
+                    .put("format", "wav")
+                    .put("channel", 1),
+            )
 
         /**
          * Official voice_id rules: length [8, 256], starts with an English
