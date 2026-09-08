@@ -1,6 +1,6 @@
-# ShineVoice v1.0
+# ShineVoice v1.0.0
 
-ShineVoice v1.0 是一个本地优先、云端增强、Provider 可扩展的 Android 中文 AI 语音工作台。本版在 V0.1 原型基础上完成赛博朋克开屏视觉、发布版本标记与 release 构建链路收束。
+ShineVoice v1.0.0 是一个本地优先、云端增强、Provider 可扩展的 Android 多语言 AI 语音工作台。本版在 V0.1 原型基础上完成多语言路由、语速持久化、Room 迁移、正式签名发布链路与 GitHub 应用内更新协议。
 
 ## 本地构建
 
@@ -61,18 +61,18 @@ scripts/fetch-sherpa-onnx.sh   # 拉取官方 AAR 并校验 SHA-256
 
 ## 当前能力
 
-- **本地生成**（ZipVoice-Distill INT8，离线可用）：文本 → 语音，支持语速调节；标准模型作为标配内置 APK（约 200 MB），首次启动自动解包，零下载、离线即用。
+- **本地生成**（ZipVoice-Distill INT8，离线可用）：文本 → 语音，支持中文 / English 与语速调节；标准模型作为标配内置 APK（约 200 MB），首次启动自动解包，零下载、离线即用。
 - **音色库**：列表化管理音色；创建/重命名/删除；录音或导入（WAV/MP3/M4A/AAC → 24 kHz 单声道）；参考文本编辑；设为当前；试听；最近使用；本地 / 云端 / 系统绑定徽标。
-- **系统语音**（Android System TTS）：设备自带中文引擎朗读，支持语速与音高。
-- **云端高清**（MiniMax，BYOK）：API Key 经 Android Keystore 加密保存；测试连接；上传参考音频克隆云端音色并保存 voice_id；云端合成、播放、保存、分享。
-- **生成历史**：按日期分组折叠，点击播放，迷你播放器，多选 / 全选 / 批量删除 / 批量分享 / ZIP 打包导出。
-- **设置**：模型与服务 / 外观（跟随系统、亮色、暗色）/ 音频 / 存储 / 隐私 / 高级（开发与诊断）/ 关于。
+- **系统语音**（Android System TTS）：读取设备实际可用音色与语言，支持多语言朗读、语速与音高；没有可用音色时给出明确提示。
+- **云端高清**（MiniMax，BYOK）：API Key 经 Android Keystore 加密保存；测试连接；上传参考音频克隆云端音色并保存 voice_id；云端合成、播放、保存、分享；语言通过独立的 language_boost 路由，不改变 voice_id。
+- **生成历史**：按日期分组折叠，点击播放，迷你播放器，多选 / 全选 / 批量删除 / 批量分享 / ZIP 打包导出，并显示生成语言与语速。
+- **设置**：模型与服务 / 外观（跟随系统、亮色、暗色）/ 音频 / 存储 / 隐私 / 高级（开发与诊断）/ 关于；系统音色采用按语种折叠的可滚动下拉选择器；关于页提供 GitHub Release 检查、下载、系统安装器确认与失败原因。
 - **赛博朋克视觉体系**：深黑基底 + HUD 网格 + 荧光黄核心操作 + 青色状态信息的统一设计语言（CyberTheme/CyberCard/CyberButton 等组件库），创作页为语音合成终端、音色页为声纹档案库、历史页为 Audio Archive、设置页为 SYSTEM CONTROL；亮色主题保持同一设计语言。
 - 工程术语（Provider、JNI、RTF、PSS、ABI、providerId、voiceId、referenceAudioPath 等）不进入普通界面，统一收纳在「设置 → 高级 → 开发与诊断」。
 
 ## 当前边界
 
-ASR 自动识别参考文本、云端音色删除接口路由、模型下载器留到后续版本。云端（MiniMax）与系统语音链路已完成模拟器真实账号联调（见 [Phase 2~6 验收证据](docs/testing/phase-2-6-acceptance-evidence.md) 与 [Phase 7 PDCA](docs/pdca/phase-7-pdca.md)）；arm64 真机复测待做。API Key、模型、WAV、AAR、APK 和构建目录均被 Git 忽略。
+ASR 自动识别参考文本、云端音色删除接口路由、模型下载器留到后续版本。MiniMax 语言能力以官方 API 合同映射到独立 language_boost 字段；本地 ZipVoice 当前随包模型覆盖中文 / English；系统语音按设备音色动态发现。API Key、模型、WAV、AAR、APK 和构建目录均被 Git 忽略。
 
 真机链路回归可使用 instrumented 测试：
 
@@ -87,6 +87,19 @@ adb shell am instrument -w -e class com.shinevoice.E2eRealChainTest \
   com.shinevoice.debug.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
+## Release 与应用内更新
+
+版本唯一来源是 version.properties，使用 versionName=1.0.0 与 versionCode=1000000。正式包必须由 SHINEVOICE_RELEASE_STORE_FILE、SHINEVOICE_RELEASE_STORE_PASSWORD、SHINEVOICE_RELEASE_KEY_ALIAS、SHINEVOICE_RELEASE_KEY_PASSWORD 注入；脚本兼容现有 ShineWriter 环境变量名称，但不会把密钥写入仓库。
+
+~~~powershell
+./scripts/build-release-apk.ps1
+./scripts/verify-release-apk.ps1 -ApkPath ./dist/apk/release/ShineVoice-V1.0.0-release.apk
+node ./scripts/generate-update-metadata.js
+node ./scripts/verify-release-metadata.js
+~~~
+
+APK 文件名、版本、包名、SHA-256、大小与固定发布证书由脚本交叉校验。应用只读取 https://github.com/anjingdtl/ShineVoice/releases/latest，仅接受 GitHub 资产、严格版本号、正式发布、精确 APK 文件名和匹配 SHA-256 的包；下载后先验证再交给 Android 系统安装器，不执行静默安装。完整操作见 [正式包构建与签名](docs/RELEASE_APK_BUILD.md)、[GitHub 应用内更新协议](docs/GITHUB_APP_UPDATE.md) 与 [Release 检查清单](docs/RELEASE_CHECKLIST.md)。
+
 ## 文档
 
 - [架构说明](docs/architecture/ARCHITECTURE.md)
@@ -94,4 +107,5 @@ adb shell am instrument -w -e class com.shinevoice.E2eRealChainTest \
 - [Phase 0/1 测试计划](docs/testing/phase-0-1-test-plan.md)
 - [Phase 2~6 本地综合验收证据](docs/testing/phase-2-6-acceptance-evidence.md)
 - [开发方案基线](docs/ShineVoice_V0.1_原型版本开发方案.md)
-- [PDCA 记录](docs/pdca/)（phase-1-1 / 2 / 3 / 4 / 5 / 6 / 7）
+- [PDCA 记录](docs/pdca/)（phase-1-1 / 2 / 3 / 4 / 5 / 6 / 7 / 9）
+- [Phase 9 多语言、发布与更新 PDCA](docs/pdca/phase-9-multilingual-release-update-pdca.md)
