@@ -1,6 +1,6 @@
 param(
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$Version = '1.13.6',
+    [string]$Version = '1.13.8',
     [switch]$Force
 )
 
@@ -18,7 +18,7 @@ if ($Force -or -not (Test-Path $destination) -or (Get-Item $destination).Length 
 
 $length = (Get-Item $destination).Length
 if ($length -lt 40000000) { throw "Downloaded AAR is incomplete: $length bytes" }
-$expectedSha256 = '0012D9A28F15BD6FB966B62B70A75DA3990512FDCCCE28B83098248CE4BE1698'
+$expectedSha256 = '633C24321E06B1FE79FEAFA03EA16CBC0F8A286641E2DA3559BAC91BDB13BD96'
 $actualSha256 = (Get-FileHash $destination -Algorithm SHA256).Hash
 if ($actualSha256 -ne $expectedSha256) {
     throw "AAR checksum mismatch: expected $expectedSha256, got $actualSha256"

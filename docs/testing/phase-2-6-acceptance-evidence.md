@@ -7,7 +7,7 @@
 ## MiniMax 真实联调（P0）
 
 凭据：本机测试文件（不入库、不写日志，仅以 BYOK 输入 App 与 `-e` 命令行参数传入 instrumented 测试）。
-区域：中国大陆 `https://api.minimax.cn`，GroupId 留空（现行 sk- 密钥仅需 Bearer）。
+区域：中国大陆 `https://api.minimaxi.com`，GroupId 留空（现行 sk- 密钥仅需 Bearer）。
 
 | 用例 | 结果 | 证据 |
 | --- | --- | --- |

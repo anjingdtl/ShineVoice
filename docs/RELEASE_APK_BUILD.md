@@ -12,7 +12,7 @@
 
 ~~~powershell
 ./scripts/build-release-apk.ps1
-./scripts/verify-release-apk.ps1 -ApkPath ./dist/apk/release/ShineVoice-V1.0.0-release.apk
+./scripts/verify-release-apk.ps1
 ~~~
 
 脚本输出正式 APK 路径、版本、文件大小与 SHA-256。验证脚本还会检查 zipalign、APK v2 签名、单一 signer、包名和 versionCode，以及发布证书指纹。

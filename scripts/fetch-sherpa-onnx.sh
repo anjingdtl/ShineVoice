@@ -8,11 +8,11 @@ set -euo pipefail
 # Usage: bash scripts/fetch-sherpa-onnx.sh [version]
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-1.13.6}"
+VERSION="${1:-1.13.8}"
 DEST_DIR="$PROJECT_ROOT/third_party"
 DEST="$DEST_DIR/sherpa-onnx-$VERSION.aar"
 URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v$VERSION/sherpa-onnx-$VERSION.aar"
-EXPECTED_SHA256='0012D9A28F15BD6FB966B62B70A75DA3990512FDCCCE28B83098248CE4BE1698'
+EXPECTED_SHA256='633C24321E06B1FE79FEAFA03EA16CBC0F8A286641E2DA3559BAC91BDB13BD96'
 MIN_SIZE=40000000
 
 mkdir -p "$DEST_DIR"

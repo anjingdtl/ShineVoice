@@ -28,7 +28,10 @@ if ($signerOutput -notmatch 'Verified using v2 scheme \(APK Signature Scheme v2\
     throw 'APK is not verified with the v2 signature scheme.'
 }
 if ($signerOutput -notmatch 'Number of signers: 1') { throw 'APK must have exactly one signer.' }
-$certMatch = [regex]::Match($signerOutput, 'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]{64})')
+$certMatch = [regex]::Match(
+    $signerOutput,
+    '(?:Signer #1 certificate SHA-256 digest|V2 Signer: certificate SHA-256 digest): ([0-9a-fA-F]{64})'
+)
 if (-not $certMatch.Success -or $certMatch.Groups[1].Value.ToLowerInvariant() -ne $expectedSigner) {
     throw 'APK signer certificate does not match the fixed release certificate.'
 }

@@ -1,6 +1,6 @@
 # ZipVoice-Distill INT8 模型部署
 
-ShineVoice 使用官方 sherpa-onnx 发布版 `v1.13.6` AAR 和官方 `tts-models` 中的 `sherpa-onnx-zipvoice-distill-int8-zh-en-emilia`。AAR 与模型均不提交 Git。
+ShineVoice 使用官方 sherpa-onnx 发布版 `v1.13.8` AAR 和官方 `tts-models` 中的 `sherpa-onnx-zipvoice-distill-int8-zh-en-emilia`。AAR 与模型均不提交 Git。
 
 ## 标配内置（默认交付方式）
 

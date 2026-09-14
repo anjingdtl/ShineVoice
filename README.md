@@ -1,6 +1,6 @@
-# ShineVoice v1.0.0
+# ShineVoice v1.0.1
 
-ShineVoice v1.0.0 是一个本地优先、云端增强、Provider 可扩展的 Android 多语言 AI 语音工作台。本版在 V0.1 原型基础上完成多语言路由、语速持久化、Room 迁移、正式签名发布链路与 GitHub 应用内更新协议。
+ShineVoice v1.0.1 是一个本地优先、云端增强、Provider 可扩展的 Android 多语言 AI 语音工作台。本版在 V1.0.0 基础上完成真实多语言链路收尾、系统 TTS 稳定性、ZipVoice 快速档位保护、MiniMax 错误分类与发布级验收。
 
 ## 本地构建
 
@@ -89,11 +89,11 @@ adb shell am instrument -w -e class com.shinevoice.E2eRealChainTest \
 
 ## Release 与应用内更新
 
-版本唯一来源是 version.properties，使用 versionName=1.0.0 与 versionCode=1000000。正式包必须由 SHINEVOICE_RELEASE_STORE_FILE、SHINEVOICE_RELEASE_STORE_PASSWORD、SHINEVOICE_RELEASE_KEY_ALIAS、SHINEVOICE_RELEASE_KEY_PASSWORD 注入；脚本兼容现有 ShineWriter 环境变量名称，但不会把密钥写入仓库。
+版本唯一来源是 version.properties，使用 versionName=1.0.1 与 versionCode=1000001。正式包必须由 SHINEVOICE_RELEASE_STORE_FILE、SHINEVOICE_RELEASE_STORE_PASSWORD、SHINEVOICE_RELEASE_KEY_ALIAS、SHINEVOICE_RELEASE_KEY_PASSWORD 注入；脚本兼容现有 ShineWriter 环境变量名称，但不会把密钥写入仓库。
 
 ~~~powershell
 ./scripts/build-release-apk.ps1
-./scripts/verify-release-apk.ps1 -ApkPath ./dist/apk/release/ShineVoice-V1.0.0-release.apk
+./scripts/verify-release-apk.ps1
 node ./scripts/generate-update-metadata.js
 node ./scripts/verify-release-metadata.js
 ~~~
