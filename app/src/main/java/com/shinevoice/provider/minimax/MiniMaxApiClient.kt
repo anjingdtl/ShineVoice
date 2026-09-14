@@ -23,7 +23,7 @@ import org.json.JSONObject
  *   POST {base}/v1/get_voice           JSON  {voice_type}            -> cloned voice list
  *   POST {base}/v1/t2a_v2              JSON  voice_setting/audio_setting -> data.audio
  *
- * Region base URLs are configurable (api.minimax.cn / api.minimax.io) so an
+ * Region base URLs are configurable (api.minimaxi.com / api.minimax.io) so an
  * outdated domain is never hard-wired; the legacy GroupId query parameter is
  * appended only when the account provides one. t2a_v2 responds with
  * output_format=url (download link) or hex-encoded audio in data.audio — it is
@@ -155,8 +155,9 @@ class MiniMaxApiClient(
 
     /**
      * Synthesizes text via t2a_v2 and writes a WAV to [outputFile].
-     * Uses output_format=url (official default is hex; we request the download
-     * link and fall back to hex decoding when the server returns hex bytes).
+     * Uses output_format=hex (the official default) so the app does not add a
+     * second network hop for a short-lived download URL. The parser still
+     * accepts a URL response for compatible regional gateways.
      */
     suspend fun synthesizeToFile(
         apiKey: String,
@@ -271,7 +272,7 @@ class MiniMaxApiClient(
             .put("model", model)
             .put("text", text)
             .put("stream", false)
-            .put("output_format", "url")
+            .put("output_format", "hex")
             .apply { putOpt("language_boost", languageBoost?.takeIf { it.isNotBlank() }) }
             .put(
                 "voice_setting",

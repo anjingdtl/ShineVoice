@@ -1,5 +1,6 @@
 package com.shinevoice.provider.sherpa
 
+import com.shinevoice.core.audio.AudioSpeedScaler
 import com.shinevoice.core.log.AppLogger
 import com.shinevoice.core.model.AudioFormat
 import com.shinevoice.core.storage.ModelDirectoryResolver
@@ -13,6 +14,7 @@ import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.domain.tts.TtsVoice
 import com.shinevoice.domain.tts.TtsLanguageCatalog
+import com.k2fsa.sherpa.onnx.GeneratedAudio
 import java.io.File
 import kotlinx.coroutines.CancellationException
 
@@ -120,7 +122,19 @@ class SherpaZipVoiceProvider(
         )
 
         return try {
-            val audio = runtimeManager.generate(request)
+            // sherpa-onnx ZipVoice can under-allocate its speech-condition
+            // buffer when a fast request makes generated frames shorter than
+            // the reference prompt. Generate fast requests at the safe 1.0x
+            // native setting, then transform the copied PCM in Kotlin. This
+            // keeps the request's observable speed and duration while avoiding
+            // an uncaught native buffer overflow in the bundled AAR.
+            val nativeSpeed = if (request.speed > 1.0f) 1.0f else request.speed
+            val generated = runtimeManager.generate(request.copy(speed = nativeSpeed))
+            val audio = if (nativeSpeed == request.speed) {
+                generated
+            } else {
+                GeneratedAudio(AudioSpeedScaler.scale(generated.samples, request.speed), generated.sampleRate)
+            }
             if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
                 failure(request, elapsed(startedAt), TtsErrorCode.NativeRuntimeError, "Native Runtime 未返回有效音频。")
             } else {
@@ -132,6 +146,7 @@ class SherpaZipVoiceProvider(
                     val elapsedMs = elapsed(startedAt)
                     logger.i(
                         "ZipVoice generated task=${request.taskId} textLength=${request.text.length} " +
+                            "nativeSpeed=$nativeSpeed requestedSpeed=${request.speed} " +
                             "elapsedMs=$elapsedMs audioDurationMs=$audioDurationMs sampleRate=${audio.sampleRate}",
                     )
                     TtsResult(

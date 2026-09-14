@@ -2,6 +2,7 @@ package com.shinevoice.provider.minimax
 
 import com.shinevoice.core.log.AppLogger
 import com.shinevoice.core.model.AudioFormat
+import com.shinevoice.core.audio.WavDurationReader
 import com.shinevoice.core.storage.WavStorage
 import com.shinevoice.data.settings.MiniMaxConfig
 import com.shinevoice.domain.tts.ProviderResult
@@ -241,37 +242,7 @@ class MiniMaxProvider(
     private fun elapsedSince(startedAt: Long): Long = (System.nanoTime() - startedAt) / 1_000_000L
 
     /** Reads the WAV data chunk size for a duration estimate; null when unparsable. */
-    private fun wavDurationMs(file: File): Long? = runCatching {
-        java.io.RandomAccessFile(file, "r").use { raf ->
-            raf.seek(12)
-            var sampleRate = 0
-            var channels = 0
-            var bitsPerSample = 0
-            var dataBytes = 0L
-            while (raf.filePointer + 8 <= raf.length()) {
-                val chunkHeader = ByteArray(8)
-                raf.readFully(chunkHeader)
-                val chunkId = String(chunkHeader, 0, 4, Charsets.US_ASCII)
-                val chunk = java.nio.ByteBuffer.wrap(chunkHeader, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int.toLong()
-                when (chunkId) {
-                    "fmt " -> {
-                        val fmt = ByteArray(chunk.toInt())
-                        raf.readFully(fmt)
-                        channels = java.nio.ByteBuffer.wrap(fmt, 2, 2).short.toInt() and 0xffff
-                        sampleRate = java.nio.ByteBuffer.wrap(fmt, 4, 4).int
-                        bitsPerSample = java.nio.ByteBuffer.wrap(fmt, 14, 2).short.toInt() and 0xffff
-                    }
-                    "data" -> {
-                        dataBytes = chunk
-                        break
-                    }
-                    else -> raf.skipBytes(chunk.toInt())
-                }
-            }
-            if (sampleRate <= 0 || channels <= 0 || bitsPerSample <= 0) return@runCatching null
-            dataBytes * 8000L / (sampleRate.toLong() * channels * (bitsPerSample / 8))
-        }
-    }.getOrNull()
+    private fun wavDurationMs(file: File): Long? = WavDurationReader.durationMs(file)
 
     companion object {
         const val PROVIDER_ID = "minimax"

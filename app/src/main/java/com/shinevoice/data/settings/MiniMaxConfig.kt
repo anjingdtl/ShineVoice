@@ -13,7 +13,7 @@ private val Context.minimaxDataStore by preferencesDataStore(name = "shinevoice_
 
 /** Cloud region keeps the endpoint configurable; no domain is hard-wired forever. */
 enum class MiniMaxRegion(val displayName: String, val baseUrl: String) {
-    CN("中国大陆", "https://api.minimax.cn"),
+    CN("中国大陆", "https://api.minimaxi.com"),
     GLOBAL("国际", "https://api.minimax.io");
 
     companion object {

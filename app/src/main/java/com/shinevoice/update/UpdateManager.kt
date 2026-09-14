@@ -33,6 +33,29 @@ sealed interface UpdateUiState {
     data class Failed(val message: String) : UpdateUiState
 }
 
+/**
+ * Small injectable policy for the automatic update-check throttle. The
+ * timestamp is written only by [recordSuccessfulCheck], after a valid release
+ * response has been received. This keeps transient failures retryable.
+ */
+class UpdateCheckThrottle(
+    private val readLastCheckAt: suspend () -> Long,
+    private val writeLastCheckAt: suspend (Long) -> Unit,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val intervalMs: Long = UpdateManager.AUTO_CHECK_INTERVAL_MS,
+) {
+    suspend fun shouldSkip(force: Boolean): Boolean {
+        if (force) return false
+        val lastCheckAt = readLastCheckAt()
+        if (lastCheckAt <= 0L) return false
+        return nowMs() - lastCheckAt < intervalMs
+    }
+
+    suspend fun recordSuccessfulCheck() {
+        writeLastCheckAt(nowMs())
+    }
+}
+
 /** Coordinates check -> download -> verify -> user-confirmed Android install. */
 class UpdateManager(
     context: Context,
@@ -40,6 +63,10 @@ class UpdateManager(
     private val logger: AppLogger,
     private val releaseClient: GitHubReleaseClient = GitHubReleaseClient(),
     private val downloader: UpdateDownloader = UpdateDownloader(),
+    private val checkThrottle: UpdateCheckThrottle = UpdateCheckThrottle(
+        readLastCheckAt = { settingsStore.updateLastCheckAt.first() },
+        writeLastCheckAt = settingsStore::setUpdateLastCheckAt,
+    ),
 ) {
     private val appContext = context.applicationContext
     private val apkVerifier = ApkVerifier(appContext)
@@ -54,15 +81,13 @@ class UpdateManager(
     suspend fun checkForUpdate(force: Boolean = false) {
         operationMutex.withLock {
             if (_state.value is UpdateUiState.Checking || _state.value is UpdateUiState.Downloading) return
-            if (!force) {
-                val lastCheck = settingsStore.updateLastCheckAt.first()
-                if (System.currentTimeMillis() - lastCheck < AUTO_CHECK_INTERVAL_MS) return
-            }
+            if (checkThrottle.shouldSkip(force)) return
             _state.value = UpdateUiState.Checking
             val result = releaseClient.fetchLatest()
-            settingsStore.setUpdateLastCheckAt(System.currentTimeMillis())
             result.fold(
                 onSuccess = { candidate ->
+                    runCatching { checkThrottle.recordSuccessfulCheck() }
+                        .onFailure { logger.w("Could not persist update-check timestamp", it) }
                     if (UpdateProtocol.decide(localVersionCode, candidate) == UpdateDecision.UpdateAvailable) {
                         _state.value = UpdateUiState.Available(candidate)
                         logger.i("Update available remoteVersionCode=${candidate.metadata.versionCode} tag=${candidate.tagName}")

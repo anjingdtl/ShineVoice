@@ -7,6 +7,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice as AndroidVoice
 import com.shinevoice.core.log.AppLogger
+import com.shinevoice.core.audio.WavDurationReader
 import com.shinevoice.core.model.AudioFormat
 import com.shinevoice.core.storage.WavStorage
 import com.shinevoice.data.settings.SettingsStore
@@ -363,19 +364,57 @@ class AndroidSystemTtsProvider(
             return failure(request, startedAt, TtsErrorCode.UnsupportedLanguage, "当前系统语音引擎不支持所选语言。")
         }
         selectedVoice?.let { voice ->
-            runCatching { current.voice = voice }
+            val voiceSelection = runCatching { current.voice = voice }
+            if (voiceSelection.isFailure) {
+                val error = voiceSelection.exceptionOrNull()
+                logger.w("AndroidTTS voice selection failed", error)
+                return failure(
+                    request,
+                    startedAt,
+                    TtsErrorCode.SystemTtsError,
+                    "系统语音无法切换到所选音色。",
+                    error?.message,
+                )
+            }
         }
         val selectedVoiceId = selectedVoice?.name ?: request.voiceId
 
-        val output = wavStorage.generatedFile(request.taskId)
-        val params = Bundle().apply {
-            // Constants match android.speech.tts.Engine.KEY_PARAM_PITCH / KEY_PARAM_RATE
-            // ("pitch" / "rate"); hard-coded to avoid SDK constant drift across API levels.
-            putFloat("pitch", request.pitch.coerceIn(0.5f, 2.0f))
-            putFloat("rate", request.speed.coerceIn(0.5f, 2.0f))
+        // Android's platform API is the portable contract for these controls.
+        // Some engines ignore the legacy Bundle keys, so never report success
+        // unless the current engine accepts both values for this request.
+        val speed = request.speed.coerceIn(MIN_SPEED, MAX_SPEED)
+        val pitch = request.pitch.coerceIn(MIN_PITCH, MAX_PITCH)
+        val speechRateStatus = runCatching { current.setSpeechRate(speed) }
+            .getOrElse { error ->
+                logger.w("AndroidTTS setSpeechRate threw", error)
+                TextToSpeech.ERROR
+            }
+        if (speechRateStatus != TextToSpeech.SUCCESS) {
+            return failure(
+                request,
+                startedAt,
+                TtsErrorCode.SystemTtsError,
+                "当前系统语音引擎不接受语速设置。",
+                "setSpeechRate status=$speechRateStatus speed=$speed",
+            )
         }
+        val pitchStatus = runCatching { current.setPitch(pitch) }
+            .getOrElse { error ->
+                logger.w("AndroidTTS setPitch threw", error)
+                TextToSpeech.ERROR
+            }
+        if (pitchStatus != TextToSpeech.SUCCESS) {
+            return failure(
+                request,
+                startedAt,
+                TtsErrorCode.SystemTtsError,
+                "当前系统语音引擎不接受音调设置。",
+                "setPitch status=$pitchStatus pitch=$pitch",
+            )
+        }
+        val output = wavStorage.generatedFile(request.taskId)
 
-        return suspendCancellableCoroutine { cont ->
+        val synthesisResult = suspendCancellableCoroutine<TtsResult> { cont ->
             val listener = object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
 
@@ -405,7 +444,7 @@ class AndroidSystemTtsProvider(
                                 model = null,
                                 voiceId = selectedVoiceId,
                                 elapsedMs = elapsed,
-                                durationMs = wavDurationMs(output),
+                                durationMs = null,
                             ),
                         )
                     }
@@ -421,7 +460,10 @@ class AndroidSystemTtsProvider(
             }
             runCatching {
                 current.setOnUtteranceProgressListener(listener)
-                val started = current.synthesizeToFile(request.text, params, output, request.taskId)
+                // The Bundle is required by the API overload but intentionally
+                // carries no rate/pitch keys; those were applied above through
+                // setSpeechRate()/setPitch().
+                val started = current.synthesizeToFile(request.text, Bundle(), output, request.taskId)
                 if (started != TextToSpeech.SUCCESS) {
                     if (cont.isActive) {
                         cont.resume(failure(request, startedAt, TtsErrorCode.SystemTtsError, "系统语音无法开始朗读。"))
@@ -436,6 +478,15 @@ class AndroidSystemTtsProvider(
                 runCatching { current.stop() }
             }
         }
+        if (!synthesisResult.success || synthesisResult.audioFile == null) {
+            return synthesisResult
+        }
+        val durationMs = withContext(Dispatchers.IO) { wavDurationMs(output) }
+        logger.i(
+            "AndroidTTS WAV parsed task=${request.taskId} durationMs=$durationMs " +
+                "fileBytes=${output.length()}",
+        )
+        return synthesisResult.copy(durationMs = durationMs)
     }
 
     override suspend fun cancel(taskId: String) {
@@ -451,37 +502,18 @@ class AndroidSystemTtsProvider(
         }
     }
 
-    private fun wavDurationMs(file: java.io.File): Long? = runCatching {
-        java.io.RandomAccessFile(file, "r").use { raf ->
-            raf.seek(12)
-            var sampleRate = 0
-            var channels = 0
-            var bitsPerSample = 0
-            var dataBytes = 0L
-            while (raf.filePointer + 8 <= raf.length()) {
-                val chunkHeader = ByteArray(8)
-                raf.readFully(chunkHeader)
-                val chunkId = String(chunkHeader, 0, 4, Charsets.US_ASCII)
-                val chunk = java.nio.ByteBuffer.wrap(chunkHeader, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int.toLong()
-                when (chunkId) {
-                    "fmt " -> {
-                        val fmt = ByteArray(chunk.toInt())
-                        raf.readFully(fmt)
-                        channels = java.nio.ByteBuffer.wrap(fmt, 2, 2).short.toInt() and 0xffff
-                        sampleRate = java.nio.ByteBuffer.wrap(fmt, 4, 4).int
-                        bitsPerSample = java.nio.ByteBuffer.wrap(fmt, 14, 2).short.toInt() and 0xffff
-                    }
-                    "data" -> {
-                        dataBytes = chunk
-                        break
-                    }
-                    else -> raf.skipBytes(chunk.toInt())
-                }
-            }
-            if (sampleRate <= 0 || channels <= 0 || bitsPerSample <= 0) return@runCatching null
-            dataBytes * 8000L / (sampleRate.toLong() * channels * (bitsPerSample / 8))
+    /** TTS engines may signal onDone just before the final WAV header is visible. */
+    private fun wavDurationMs(file: java.io.File): Long? {
+        // Google TTS can finish the callback before the engine closes/flushed
+        // the destination. Keep the wait bounded so a broken engine still
+        // returns a normal result instead of hanging the generation forever.
+        repeat(40) { attempt ->
+            val duration = WavDurationReader.durationMs(file)
+            if (duration != null && duration > 0L) return duration
+            if (attempt < 39) runCatching { Thread.sleep(50L) }
         }
-    }.getOrNull()
+        return null
+    }
 
     private fun failure(
         request: TtsRequest,
@@ -500,6 +532,10 @@ class AndroidSystemTtsProvider(
 
     companion object {
         const val PROVIDER_ID = "android_system_tts"
+        const val MIN_SPEED = 0.5f
+        const val MAX_SPEED = 2.0f
+        const val MIN_PITCH = 0.5f
+        const val MAX_PITCH = 2.0f
         /** Request extra carrying a profile-bound engine package. */
         const val EXTRA_ENGINE = "enginePackage"
     }

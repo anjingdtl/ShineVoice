@@ -15,7 +15,7 @@ import com.shinevoice.domain.tts.TtsErrorCode
 import com.shinevoice.domain.tts.TtsRequest
 import java.io.File
 
-/** Owns exactly one sherpa-onnx OfflineTts object for the application process. */
+/** Owns one sherpa-onnx OfflineTts object at a time and recycles it per request. */
 class SherpaRuntimeManager(
     private val modelResolver: ModelDirectoryResolver,
     private val referenceAudioLoader: ReferenceAudioLoader,
@@ -55,7 +55,10 @@ class SherpaRuntimeManager(
             val config = OfflineTtsConfig(
                 model = OfflineTtsModelConfig(
                     zipvoice = zipVoice,
-                    numThreads = 2,
+                    // Keep the native ORT thread pool single-threaded. The bundled
+                    // sherpa-onnx 1.13.x x86_64 runtime is unstable on repeated
+                    // ZipVoice generations when it owns multiple worker threads.
+                    numThreads = 1,
                     debug = false,
                     provider = "cpu",
                 ),
@@ -80,23 +83,37 @@ class SherpaRuntimeManager(
     fun generate(request: TtsRequest): GeneratedAudio {
         val runtime = synchronized(lock) { tts }
             ?: throw IllegalStateException("ZipVoice Native Runtime is not initialized")
+        return try {
+            val layout = modelResolver.layout()
+            val reference = referenceAudioLoader.load(
+                File(request.extra[EXTRA_REFERENCE_AUDIO] ?: layout.referenceAudio.absolutePath),
+            )
+            val referenceText = request.extra[EXTRA_REFERENCE_TEXT].orEmpty()
+            require(referenceText.isNotBlank()) { "referenceText must not be blank" }
 
-        val layout = modelResolver.layout()
-        val reference = referenceAudioLoader.load(
-            File(request.extra[EXTRA_REFERENCE_AUDIO] ?: layout.referenceAudio.absolutePath),
-        )
-        val referenceText = request.extra[EXTRA_REFERENCE_TEXT].orEmpty()
-        require(referenceText.isNotBlank()) { "referenceText must not be blank" }
-
-        val generationConfig = GenerationConfig(
-            speed = request.speed,
-            referenceAudio = reference.samples,
-            referenceSampleRate = reference.sampleRate,
-            referenceText = referenceText,
-            numSteps = request.extra[EXTRA_NUM_STEPS]?.toIntOrNull()?.coerceIn(1, 8) ?: 4,
-            silenceScale = 0.2f,
-        )
-        return runtime.generateWithConfig(request.text, generationConfig)
+            val generationConfig = GenerationConfig(
+                speed = request.speed,
+                referenceAudio = reference.samples,
+                referenceSampleRate = reference.sampleRate,
+                referenceText = referenceText,
+                numSteps = request.extra[EXTRA_NUM_STEPS]?.toIntOrNull()?.coerceIn(1, 8) ?: 4,
+                silenceScale = 0.2f,
+            )
+            runtime.generateWithConfig(request.text, generationConfig)
+        } finally {
+            // sherpa-onnx 1.13.x has a native lifetime bug when the same
+            // OfflineTts pointer is used for repeated generateWithConfig calls:
+            // the first result can succeed while a later call corrupts a
+            // secondary allocation. Recycle the pointer after every request;
+            // GeneratedAudio owns its copied samples and remains safe to save.
+            synchronized(lock) {
+                if (tts === runtime) {
+                    tts = null
+                    runCatching { runtime.release() }
+                        .onFailure { logger.w("ZipVoice Native Runtime per-request release failed", it) }
+                }
+            }
+        }
     }
 
     fun release() = synchronized(lock) {
@@ -114,4 +131,3 @@ class SherpaRuntimeManager(
         const val EXTRA_NUM_STEPS = "numSteps"
     }
 }
-

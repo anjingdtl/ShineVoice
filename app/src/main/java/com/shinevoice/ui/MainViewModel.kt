@@ -258,13 +258,22 @@ class MainViewModel(
 
     fun refreshModelAndInitialize() {
         viewModelScope.launch {
+            application.awaitStartupPreparation()
             val status = withContext(Dispatchers.IO) { application.modelResolver.inspect(forceIntegrityCheck = true) }
             val userMessage = when {
                 status.ready -> "本地模型已就绪，可离线生成。"
                 status.missingFiles.isNotEmpty() -> "本地模型未安装完整，本地生成暂不可用。"
                 else -> "本地模型校验未通过，请到「设置 → 高级 → 开发与诊断」查看。"
             }
-            _uiState.update { it.copy(modelStatus = status, message = userMessage) }
+            val currentVoice = application.voiceProfileManager.observeCurrent().first()
+            _uiState.update {
+                it.copy(
+                    modelStatus = status,
+                    currentVoice = currentVoice,
+                    referenceStatus = application.voiceProfileManager.referenceStatus(currentVoice),
+                    message = userMessage,
+                )
+            }
             if (status.ready) {
                 initializeProvider(
                     providerId = SherpaZipVoiceProvider.PROVIDER_ID,

@@ -21,12 +21,14 @@ import com.shinevoice.provider.sherpa.SherpaRuntimeManager
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import com.shinevoice.update.UpdateManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class ShineVoiceApplication : Application() {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val startupPreparation = CompletableDeferred<Unit>()
     /** Transient hand-off of a freshly built ZIP before the SAF save dialog completes. */
     @Volatile var zippedExport: java.io.File? = null
     val logger by lazy { AppLogger() }
@@ -68,9 +70,21 @@ class ShineVoiceApplication : Application() {
         // model. MainViewModel initializes Native only after the model check.
         ttsManager
         applicationScope.launch {
-            runCatching { voiceProfileManager.ensureDefaultProfile() }
-                .onFailure { logger.w("Could not seed default voice profile", it) }
+            try {
+                // The default profile points at the extracted reference.wav.
+                // Complete this small file/DB ordering barrier before the UI
+                // evaluates profile readiness, otherwise a fresh install can
+                // briefly (or permanently) report a missing reference.
+                runCatching { modelResolver.extractBundledModelIfNeeded() }
+                    .onFailure { logger.w("Could not extract bundled model", it) }
+                runCatching { voiceProfileManager.ensureDefaultProfile() }
+                    .onFailure { logger.w("Could not seed default voice profile", it) }
+            } finally {
+                startupPreparation.complete(Unit)
+            }
         }
         logger.i("ShineVoice application started")
     }
+
+    suspend fun awaitStartupPreparation() = startupPreparation.await()
 }
