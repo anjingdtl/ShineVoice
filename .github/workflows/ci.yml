@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    name: Unit tests + Debug build
+    name: Unit tests + Lint + Debug build
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -32,6 +32,9 @@ jobs:
 
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Lint debug
+        run: ./gradlew :app:lintDebug --no-daemon --stacktrace
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon

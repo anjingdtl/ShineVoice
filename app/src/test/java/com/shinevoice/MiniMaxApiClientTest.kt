@@ -189,7 +189,7 @@ class MiniMaxApiClientTest {
         try {
             val fastClient = MiniMaxApiClient(connectTimeoutMs = 500, readTimeoutMs = 500)
             val result = fastClient.listVoices(
-                apiKey = "sk-test-not-a-real-key",
+                apiKey = "test-key-not-a-real-key",
                 baseUrl = "http://127.0.0.1:${server.localPort}/v1/",
                 groupId = null,
             )
@@ -205,7 +205,7 @@ class MiniMaxApiClientTest {
     fun uploadRejectsOversizedFileLocally(): Unit = runBlocking {
         val big = tmp.newFile("big.wav").apply { writeBytes(ByteArray(20 * 1024 * 1024 + 1)) }
         val result = client.uploadReferenceAudio(
-            apiKey = "sk-test",
+            apiKey = "test-key",
             baseUrl = "https://api.minimax.cn/v1/",
             groupId = null,
             audioFile = big,
@@ -218,7 +218,7 @@ class MiniMaxApiClientTest {
     @Test
     fun uploadRejectsMissingFileLocally(): Unit = runBlocking {
         val result = client.uploadReferenceAudio(
-            apiKey = "sk-test",
+            apiKey = "test-key",
             baseUrl = "https://api.minimax.cn/v1/",
             groupId = null,
             audioFile = File(tmp.root, "missing.wav"),
@@ -230,7 +230,7 @@ class MiniMaxApiClientTest {
     @Test
     fun cloneRejectsMalformedVoiceIdBeforeNetwork(): Unit = runBlocking {
         val result = client.cloneVoice(
-            apiKey = "sk-test",
+            apiKey = "test-key",
             baseUrl = "https://api.minimax.cn/v1/",
             groupId = null,
             fileId = 123L,

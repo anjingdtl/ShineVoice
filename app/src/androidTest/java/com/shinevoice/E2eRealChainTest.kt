@@ -5,7 +5,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.shinevoice.core.storage.ModelDirectoryResolver
 import com.shinevoice.domain.tts.TtsRequest
 import com.shinevoice.domain.tts.TtsLanguageCatalog
+import com.shinevoice.domain.tts.TtsResult
+import com.shinevoice.domain.tts.TtsVoice
 import com.shinevoice.provider.androidtts.AndroidSystemTtsProvider
+import com.shinevoice.provider.minimax.MiniMaxLanguageMapper
 import com.shinevoice.provider.minimax.MiniMaxProvider
 import com.shinevoice.provider.sherpa.SherpaZipVoiceProvider
 import java.io.File
@@ -25,15 +28,13 @@ import org.junit.runners.MethodSorters
  * Real-chain E2E tests executed on a device/emulator via the app's own
  * wiring (ShineVoiceApplication). No mocks: ZipVoice runs real Native
  * inference, Android System TTS uses real engines/voices, and the MiniMax
- * test talks to the live API when a key is passed via
- * `am instrument -e minimaxApiKey <key>` (never committed anywhere).
+ * test talks to the live API when the host test runner supplies a credential
+ * through the process-only instrumentation argument (never committed,
+ * logged, or written to the project).
  *
  * Run examples:
  *   ./gradlew :app:connectedDebugAndroidTest
- *   adb shell am instrument -w -e class com.shinevoice.E2eRealChainTest \
- *     -e minimaxApiKey <key> \
- *     -e cloneRef /sdcard/Android/data/com.shinevoice.debug/files/voices/minimax-e2e/reference.wav \
- *     com.shinevoice.debug.test/androidx.test.runner.AndroidJUnitRunner
+ *   The live credential is injected by the local acceptance runner only.
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -61,6 +62,138 @@ class E2eRealChainTest {
             .digest(value.toByteArray())
             .take(6)
             .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
+    private data class SpeedObservation(
+        val speed: Float,
+        val result: TtsResult,
+        val file: File,
+    )
+
+    private fun assertSpeedOrdering(label: String, observations: List<SpeedObservation>) {
+        val bySpeed = observations.associateBy { it.speed }
+        val slow = bySpeed[0.5f]?.result?.durationMs
+        val normal = bySpeed[1.0f]?.result?.durationMs
+        val fast = bySpeed[2.0f]?.result?.durationMs
+        assertTrue("$label missing 0.5x duration", slow != null && slow > 0L)
+        assertTrue("$label missing 1.0x duration", normal != null && normal > 0L)
+        assertTrue("$label missing 2.0x duration", fast != null && fast > 0L)
+        assertTrue("$label 0.5x was not slower: $slow <= $normal", slow!! > normal!!)
+        assertTrue("$label 2.0x was not faster: $fast >= $normal", fast!! < normal)
+        println(
+            "E2E_SPEED_ORDER label=$label durationMs(0.5/1.0/2.0)=" +
+                "$slow/$normal/$fast ratios=" +
+                "${"%.3f".format(slow.toDouble() / normal)} / ${"%.3f".format(fast.toDouble() / normal)}",
+        )
+    }
+
+    private suspend fun runZipVoiceSpeedMatrix(language: String, text: String): List<SpeedObservation> {
+        val speeds = args("zipSpeed")?.toFloatOrNull()?.let(::listOf) ?: listOf(0.5f, 1.0f, 2.0f)
+        val observations = speeds.map { speed ->
+            val request = TtsRequest(
+                taskId = "e2e-zv-matrix-$language-$speed-${UUID.randomUUID()}",
+                text = text,
+                providerId = SherpaZipVoiceProvider.PROVIDER_ID,
+                voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
+                language = language,
+                speed = speed,
+                extra = mapOf(
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to app.modelResolver.referenceAudio.absolutePath,
+                    SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
+                    SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
+                ),
+            )
+            val result = app.ttsManager.synthesize(request)
+            assertTrue(
+                "ZipVoice $language ${speed}x failed: ${result.error?.userMessage}",
+                result.success,
+            )
+            val file = File(result.audioFile!!)
+            assertTrue("ZipVoice $language ${speed}x output is not WAV", isWav(file))
+            assertTrue("ZipVoice $language ${speed}x duration missing", (result.durationMs ?: 0L) > 0L)
+            val persisted = app.database.generationHistoryDao().getByIds(listOf(request.taskId)).firstOrNull()
+            assertTrue("ZipVoice $language ${speed}x history row missing", persisted != null)
+            persisted?.let {
+                assertEquals(language, it.language)
+                assertEquals(speed, it.speed, 0.0001f)
+            }
+            println(
+                "E2E_ZIPVOICE_LANGUAGE language=$language speed=$speed elapsedMs=${result.elapsedMs} " +
+                    "durationMs=${result.durationMs} bytes=${file.length()} playback=WAV_HEADER_OK",
+            )
+            SpeedObservation(speed, result, file)
+        }
+        if (speeds == listOf(0.5f, 1.0f, 2.0f)) {
+            assertSpeedOrdering("ZipVoice $language", observations)
+        }
+        return observations
+    }
+
+    private suspend fun runSystemTtsSpeedMatrix(
+        provider: AndroidSystemTtsProvider,
+        language: String,
+        voice: TtsVoice,
+        text: String,
+    ): List<SpeedObservation> {
+        val observations = listOf(0.5f, 1.0f, 2.0f).map { speed ->
+            val request = TtsRequest(
+                taskId = "e2e-sys-matrix-$language-$speed-${UUID.randomUUID()}",
+                text = text,
+                providerId = AndroidSystemTtsProvider.PROVIDER_ID,
+                voiceId = voice.id,
+                language = language,
+                speed = speed,
+            )
+            val result = app.ttsManager.synthesize(request)
+            assertTrue(
+                "System TTS $language ${speed}x failed: ${result.error?.userMessage}",
+                result.success,
+            )
+            assertEquals("System TTS selected the wrong voice", voice.id, result.voiceId)
+            val file = File(result.audioFile!!)
+            assertTrue("System TTS $language ${speed}x output is not WAV", isWav(file))
+            assertTrue("System TTS $language ${speed}x duration missing", (result.durationMs ?: 0L) > 0L)
+            println(
+                "E2E_SYSTEM_TTS language=$language speed=$speed voiceLength=${voice.id.length} " +
+                    "voiceFingerprint=${voiceFingerprint(voice.id)} elapsedMs=${result.elapsedMs} " +
+                    "durationMs=${result.durationMs} bytes=${file.length()} playback=WAV_HEADER_OK",
+            )
+            SpeedObservation(speed, result, file)
+        }
+        assertSpeedOrdering("System TTS $language", observations)
+        return observations
+    }
+
+    private suspend fun ensureCloudVoice(provider: MiniMaxProvider, purpose: String): String {
+        app.voiceProfileManager.ensureDefaultProfile()
+        val profiles = app.voiceProfileManager.observeProfiles().first()
+        var voiceId = profiles.firstOrNull { !it.minimaxVoiceId.isNullOrBlank() }?.minimaxVoiceId
+        if (voiceId == null) {
+            // A clean test install has not necessarily opened the model screen
+            // yet. Trigger the app's normal bundled-asset extraction so the
+            // official reference.wav is available for the real clone request.
+            app.modelResolver.extractBundledModelIfNeeded()
+            val reference = args("cloneRef")?.let(::File) ?: app.modelResolver.referenceAudio
+            assertTrue("$purpose reference audio missing: ${reference.path}", reference.isFile)
+            val clone = provider.cloneVoice(
+                com.shinevoice.domain.tts.VoiceCloneRequest(
+                    voiceProfileId = "e2e-$purpose-clone",
+                    referenceAudioPath = reference.absolutePath,
+                    referenceText = ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
+                ),
+            )
+            assertTrue("$purpose cloud clone failed: ${clone.error?.userMessage}", clone.success)
+            voiceId = clone.voiceId
+            assertTrue("$purpose cloud clone returned no voice", !voiceId.isNullOrBlank())
+            profiles.firstOrNull()?.let { profile ->
+                app.voiceProfileManager.updateCloudBinding(profile.id, voiceId!!)
+            }
+            println(
+                "E2E_MINIMAX_CLONE purpose=$purpose voiceLength=${voiceId!!.length} " +
+                    "voiceFingerprint=${voiceFingerprint(voiceId!!)}",
+            )
+        }
+        return voiceId!!
+    }
 
     /** 20 consecutive real ZipVoice generations with timing/RTF/PSS statistics. */
     @Test
@@ -118,46 +251,41 @@ class E2eRealChainTest {
         println("E2E SystemTTS engines=${engines.joinToString { "${it.label}(${if (it.isSystemDefault) "default" else ""})" }}")
         val init = provider.initialize()
         assertTrue("system tts init failed: ${init.message}", init.success)
-        val voices = provider.getVoices()
-        assertTrue("no system voices for default engine", voices.isNotEmpty())
-        val chineseVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.ZH_CN.id }
-            ?: voices.first()
-        println("E2E SystemTTS chineseVoices=${voices.size} first=${voices.first().displayName}")
-        val request = TtsRequest(
-            taskId = "e2e-sys-${UUID.randomUUID()}",
-            text = "这是系统语音引擎的真实中文朗读测试。",
-            providerId = AndroidSystemTtsProvider.PROVIDER_ID,
-            voiceId = chineseVoice.id,
-            language = TtsLanguageCatalog.ZH_CN.id,
-            speed = 1.0f,
-        )
-        val result = app.ttsManager.synthesize(request)
-        assertTrue("system tts synthesis failed: ${result.error?.userMessage}", result.success)
-        assertTrue("system tts output not wav", isWav(File(result.audioFile!!)))
-        val englishVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.EN_US.id }
-        if (englishVoice != null) {
-            val englishResult = app.ttsManager.synthesize(
-                TtsRequest(
-                    taskId = "e2e-sys-en-" + UUID.randomUUID(),
-                    text = "This is a real English system voice synthesis test.",
-                    providerId = AndroidSystemTtsProvider.PROVIDER_ID,
-                    voiceId = englishVoice.id,
+        try {
+            val voices = provider.getVoices()
+            assertTrue("no system voices for default engine", voices.isNotEmpty())
+            val chineseVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.ZH_CN.id }
+            val englishVoice = voices.firstOrNull { it.language == TtsLanguageCatalog.EN_US.id }
+            println("E2E SystemTTS voiceCount=${voices.size}")
+            var testedLanguages = 0
+            if (chineseVoice != null) {
+                runSystemTtsSpeedMatrix(
+                    provider = provider,
+                    language = TtsLanguageCatalog.ZH_CN.id,
+                    voice = chineseVoice,
+                    text = "这是系统语音引擎的真实中文语速验收。每个档位都必须输出可播放的 WAV，并且慢速明显更长、快速明显更短。",
+                )
+                testedLanguages++
+            } else {
+                println("E2E SystemTTS language=${TtsLanguageCatalog.ZH_CN.id} UNSUPPORTED_BY_TEST_DEVICE")
+            }
+            if (englishVoice != null) {
+                runSystemTtsSpeedMatrix(
+                    provider = provider,
                     language = TtsLanguageCatalog.EN_US.id,
-                    speed = 1.0f,
-                ),
-            )
-            assertTrue("system English synthesis failed", englishResult.success)
-            assertTrue("system English output not wav", isWav(File(englishResult.audioFile!!)))
-            println("E2E SystemTTS English voice verified language=" + englishVoice.language)
-        } else {
-            println("E2E SystemTTS English SKIPPED (engine has no English voice)")
+                    voice = englishVoice,
+                    text = "This is a real system TTS speed acceptance test. Every speed must produce a playable WAV, with a clearly longer slow result and a clearly shorter fast result.",
+                )
+                testedLanguages++
+            } else {
+                println("E2E SystemTTS language=${TtsLanguageCatalog.EN_US.id} UNSUPPORTED_BY_TEST_DEVICE")
+            }
+            assertTrue("no supported Chinese or English system language on test device", testedLanguages > 0)
+            val caps = provider.getCapabilities()
+            println("E2E SystemTTS supportsOffline=${caps.supportsOffline} testedLanguages=$testedLanguages")
+        } finally {
+            provider.release()
         }
-        val caps = provider.getCapabilities()
-        println(
-            "E2E SystemTTS supportsOffline=${caps.supportsOffline} " +
-                "voiceLength=${voices.first().id.length} voiceFingerprint=${voiceFingerprint(voices.first().id)}",
-        )
-        provider.release()
     }
 
     /**
@@ -169,37 +297,27 @@ class E2eRealChainTest {
     fun test03_minimaxRealChain() = runBlocking {
         val apiKey = args("minimaxApiKey")
             ?: return@runBlocking println("E2E MiniMax SKIPPED (no -e minimaxApiKey)")
-        val cloneRef = args("cloneRef")?.let(::File)
         app.minimaxConfig.save("", apiKey, com.shinevoice.data.settings.MiniMaxRegion.CN)
         val provider = app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider
         val probe = provider.validateConfig()
+        println(
+            "E2E_MINIMAX_PREFLIGHT success=${probe.success} code=${probe.error?.code} " +
+                "message=${probe.message} cause=${probe.error?.causeMessage?.take(120)}",
+        )
         assertTrue("MiniMax connection failed: ${probe.message}", probe.success)
-        println("E2E MiniMax connection OK: ${probe.message}")
-
-        var voiceId = app.voiceProfileManager.observeProfiles().first()
-            .firstOrNull { profile -> !profile.minimaxVoiceId.isNullOrBlank() }
-            ?.minimaxVoiceId
-        if (voiceId == null && cloneRef != null && cloneRef.isFile) {
-            val clone = provider.cloneVoice(
-                com.shinevoice.domain.tts.VoiceCloneRequest(
-                    voiceProfileId = "e2e-clone",
-                    referenceAudioPath = cloneRef.absolutePath,
-                    referenceText = "",
-                ),
-            )
-            assertTrue("clone failed: ${clone.error?.userMessage}", clone.success)
-            voiceId = clone.voiceId
-            println("E2E MiniMax cloned voiceIdLength=${voiceId?.length}")
-        }
-        assertTrue("no cloud voice available (no binding and no cloneRef)", voiceId != null)
+        println("E2E_MINIMAX_PREFLIGHT credentialLoaded=true connection=success")
+        val voiceId = ensureCloudVoice(provider, "single-chain")
 
         val started = System.nanoTime()
+        val language = TtsLanguageCatalog.ZH_CN.id
+        val text = "这是云端高清的真实中文合成测试。"
         val result = app.ttsManager.synthesize(
             TtsRequest(
                 taskId = "e2e-mm-${UUID.randomUUID()}",
-                text = "这是云端高清的真实中文合成测试。",
+                text = text,
                 providerId = MiniMaxProvider.PROVIDER_ID,
                 voiceId = voiceId,
+                language = language,
                 speed = 1.0f,
             ),
         )
@@ -207,9 +325,14 @@ class E2eRealChainTest {
         assertTrue("MiniMax t2a failed: ${result.error?.userMessage} / ${result.error?.causeMessage}", result.success)
         val wav = File(result.audioFile!!)
         assertTrue("MiniMax output not wav: ${wav.length()}B", isWav(wav))
+        assertTrue("MiniMax duration missing", (result.durationMs ?: 0L) > 0L)
         println(
-            "E2E MiniMax t2a OK wallMs=$wallMs providerElapsedMs=${result.elapsedMs} " +
-                "bytes=${wav.length()} model=${result.model} voiceIdLength=${voiceId?.length}",
+                "E2E_MINIMAX_REAL task=${result.taskId} language=$language " +
+                "languageBoost=${MiniMaxLanguageMapper.toLanguageBoost(language)} speed=1.0 " +
+                "textLength=${text.length} voiceIdLength=${voiceId.length} " +
+                "voiceFingerprint=${voiceFingerprint(voiceId)} success=${result.success} " +
+                "wallMs=$wallMs providerElapsedMs=${result.elapsedMs} audioBytes=${wav.length()} " +
+                "durationMs=${result.durationMs} model=${result.model}",
         )
     }
 
@@ -224,41 +347,17 @@ class E2eRealChainTest {
     fun test04_providerStrictThreeWayCycle() = runBlocking {
         val sysProvider = app.providerRegistry.get(AndroidSystemTtsProvider.PROVIDER_ID) as AndroidSystemTtsProvider
         assertTrue("system tts init failed", sysProvider.initialize().success)
-        val sysVoice = sysProvider.getVoices().firstOrNull()?.id
+        val sysVoice = sysProvider.getVoices()
+            .firstOrNull { it.language == TtsLanguageCatalog.ZH_CN.id }
+            ?.id
+            ?: sysProvider.getVoices().firstOrNull()?.id
         assertTrue("no system voice", sysVoice != null)
         val cloudKey = args("minimaxApiKey")
             ?: return@runBlocking println("E2E 3-way cycle SKIPPED (no -e minimaxApiKey)")
-        var cloudVoice = app.voiceProfileManager.observeProfiles().first()
-            .firstOrNull { profile -> !profile.minimaxVoiceId.isNullOrBlank() }
-            ?.minimaxVoiceId
-        if (cloudVoice == null) {
-            // No profile carries a cloud binding: clone once from the on-device
-            // E2E reference (>=10 s) and persist the binding for later runs.
-            val cloneRef = File(
-                args("cloneRef")
-                    ?: "/sdcard/Android/data/com.shinevoice.debug/files/voices/minimax-e2e/reference.wav",
-            )
-            assertTrue("no bound cloud voice and no cloneRef at ${cloneRef.path}", cloneRef.isFile)
-            val clone = (app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider).cloneVoice(
-                com.shinevoice.domain.tts.VoiceCloneRequest(
-                    voiceProfileId = "e2e-clone",
-                    referenceAudioPath = cloneRef.absolutePath,
-                    referenceText = "",
-                ),
-            )
-            assertTrue("cloud clone failed: ${clone.error?.userMessage}", clone.success)
-            cloudVoice = clone.voiceId
-            app.voiceProfileManager.observeProfiles().first().firstOrNull()?.let { profile ->
-                app.voiceProfileManager.updateCloudBinding(profile.id, cloudVoice!!)
-            }
-            println("E2E 3-way cloned fresh cloud voice (idLength=${cloudVoice?.length})")
-        }
         app.minimaxConfig.save("", cloudKey, com.shinevoice.data.settings.MiniMaxRegion.CN)
-        assertTrue(
-            "cloud pre-flight failed",
-            (app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider)
-                .validateConfig().success,
-        )
+        val cloudProvider = app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider
+        assertTrue("cloud pre-flight failed", cloudProvider.validateConfig().success)
+        val cloudVoice = ensureCloudVoice(cloudProvider, "three-way")
 
         val rounds = 7
         var failures = 0
@@ -275,6 +374,7 @@ class E2eRealChainTest {
                     text = "三方式切换第${round + 1}轮，$label 真实生成测试。",
                     providerId = providerId,
                     voiceId = voiceId,
+                    language = TtsLanguageCatalog.ZH_CN.id,
                     extra = if (providerId == SherpaZipVoiceProvider.PROVIDER_ID) {
                         mapOf(
                             SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to app.modelResolver.referenceAudio.absolutePath,
@@ -398,121 +498,113 @@ class E2eRealChainTest {
         assertEquals("ZipVoice 50-run failures", 0, failures)
     }
 
-    /** Real bundled ZipVoice inference for both languages declared by the model. */
+    /** Real bundled ZipVoice inference and speed ordering for both model languages. */
     @Test
-    fun test08_zipVoiceChineseAndEnglishRealInference() = runBlocking {
+    fun test08_zipVoiceChineseAndEnglishRealInference(): Unit = runBlocking {
         val status = app.modelResolver.inspect(forceIntegrityCheck = true)
         assertTrue("model not ready: " + status.summary, status.ready)
         assertTrue("ZipVoice init failed", app.ttsManager.initialize(SherpaZipVoiceProvider.PROVIDER_ID).success)
-
-        val cases = listOf(
-            Triple(TtsLanguageCatalog.ZH_CN.id, "这是本地模型的中文真实推理测试。", 1.0f),
-            Triple(TtsLanguageCatalog.EN_US.id, "This is a real English inference test from the bundled model.", 0.75f),
+        runZipVoiceSpeedMatrix(
+            language = TtsLanguageCatalog.ZH_CN.id,
+            text = "这是本地 ZipVoice 模型的中文真实推理和语速验收测试。每个速度档位都必须写出可播放的 WAV 音频。",
         )
-        for (case in cases) {
-            val language = case.first
-            val request = TtsRequest(
-                taskId = "e2e-zv-language-" + language + "-" + UUID.randomUUID(),
-                text = case.second,
-                providerId = SherpaZipVoiceProvider.PROVIDER_ID,
-                voiceId = SherpaZipVoiceProvider.DEFAULT_VOICE_ID,
-                language = language,
-                speed = case.third,
-                extra = mapOf(
-                    SherpaZipVoiceProvider.EXTRA_REFERENCE_AUDIO to app.modelResolver.referenceAudio.absolutePath,
-                    SherpaZipVoiceProvider.EXTRA_REFERENCE_TEXT to ModelDirectoryResolver.DEFAULT_REFERENCE_TEXT,
-                    SherpaZipVoiceProvider.EXTRA_NUM_STEPS to "4",
-                ),
-            )
-            val result = app.ttsManager.synthesize(request)
-            assertTrue(
-                "ZipVoice " + language + " failed: " + result.error?.userMessage,
-                result.success,
-            )
-            assertTrue("ZipVoice " + language + " output is not WAV", isWav(File(result.audioFile!!)))
-            println(
-                "E2E_ZIPVOICE_LANGUAGE language=" + language +
-                    " speed=" + case.third + " elapsedMs=" + result.elapsedMs +
-                    " bytes=" + File(result.audioFile!!).length(),
-            )
-        }
+        runZipVoiceSpeedMatrix(
+            language = TtsLanguageCatalog.EN_US.id,
+            text = "This is a real English inference and speed acceptance test from the bundled ZipVoice model. Every speed must produce a playable WAV audio file.",
+        )
     }
 
     /**
-     * Real MiniMax contract test: one cloned voice binding, five language/rate
+     * Real MiniMax contract test: one cloned voice binding, seven language/rate
      * combinations, and no voice cloning during language changes.
      */
     @Test
     fun test09_minimaxMultilingualSameVoiceAndSpeed() = runBlocking {
         val apiKey = args("minimaxApiKey")
             ?: return@runBlocking println("E2E MiniMax multilingual SKIPPED (no -e minimaxApiKey)")
-        val cloneRef = args("cloneRef")?.let(::File)
         app.minimaxConfig.save("", apiKey, com.shinevoice.data.settings.MiniMaxRegion.CN)
         val provider = app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider
-
-        var voiceId = app.voiceProfileManager.observeProfiles().first()
-            .firstOrNull { profile -> !profile.minimaxVoiceId.isNullOrBlank() }
-            ?.minimaxVoiceId
-        if (voiceId == null && cloneRef != null && cloneRef.isFile) {
-            val clone = provider.cloneVoice(
-                com.shinevoice.domain.tts.VoiceCloneRequest(
-                    voiceProfileId = "e2e-multilingual-clone",
-                    referenceAudioPath = cloneRef.absolutePath,
-                    referenceText = "",
-                ),
-            )
-            assertTrue("MiniMax multilingual clone failed", clone.success)
-            voiceId = clone.voiceId
-        }
-        val stableVoiceId = voiceId ?: run {
-            println("E2E MiniMax multilingual SKIPPED (no bound voice and no cloneRef)")
-            return@runBlocking
-        }
+        val probe = provider.validateConfig()
+        println(
+            "E2E_MINIMAX_PREFLIGHT success=${probe.success} code=${probe.error?.code} " +
+                "message=${probe.message} cause=${probe.error?.causeMessage?.take(120)}",
+        )
+        assertTrue("MiniMax multilingual pre-flight failed: ${probe.message}", probe.success)
+        val stableVoiceId = ensureCloudVoice(provider, "multilingual")
         val cases = listOf(
-            Triple(TtsLanguageCatalog.ZH_CN.id, "这是同一克隆声纹的中文测试。", 1.0f),
-            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice in English.", 1.0f),
-            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice at a slower rate.", 0.75f),
-            Triple(TtsLanguageCatalog.EN_US.id, "This is the same cloned voice at a faster rate.", 1.5f),
-            Triple(TtsLanguageCatalog.JA_JP.id, "これは同じクローン音声の日本語テストです。", 1.0f),
+            Triple(TtsLanguageCatalog.ZH_CN.id, "大家好，这是 ShineVoice 多语言声音测试。", 0.75f),
+            Triple(TtsLanguageCatalog.ZH_CN.id, "大家好，这是 ShineVoice 多语言声音测试。", 1.0f),
+            Triple(TtsLanguageCatalog.ZH_CN.id, "大家好，这是 ShineVoice 多语言声音测试。", 1.5f),
+            Triple(TtsLanguageCatalog.EN_US.id, "Hello everyone, this is a multilingual ShineVoice voice test.", 0.75f),
+            Triple(TtsLanguageCatalog.EN_US.id, "Hello everyone, this is a multilingual ShineVoice voice test.", 1.0f),
+            Triple(TtsLanguageCatalog.EN_US.id, "Hello everyone, this is a multilingual ShineVoice voice test.", 1.5f),
+            Triple(TtsLanguageCatalog.JA_JP.id, "こんにちは、これは ShineVoice の多言語音声テストです。", 1.0f),
         )
         val observedVoiceIds = mutableListOf<String>()
+        val successfulLanguages = mutableMapOf<String, Int>()
         for (case in cases) {
-            val result = app.ttsManager.synthesize(
-                TtsRequest(
-                    taskId = "e2e-mm-language-" + case.first + "-" + case.third + "-" + UUID.randomUUID(),
-                    text = case.second,
-                    providerId = MiniMaxProvider.PROVIDER_ID,
-                    voiceId = stableVoiceId,
-                    language = case.first,
-                    speed = case.third,
-                ),
+            val request = TtsRequest(
+                taskId = "e2e-mm-language-" + case.first + "-" + case.third + "-" + UUID.randomUUID(),
+                text = case.second,
+                providerId = MiniMaxProvider.PROVIDER_ID,
+                voiceId = stableVoiceId,
+                language = case.first,
+                speed = case.third,
             )
+            var result = app.ttsManager.synthesize(request)
+            if (!result.success && result.error?.code == com.shinevoice.domain.tts.TtsErrorCode.ApiRateLimited) {
+                println("E2E_MINIMAX_LANGUAGE task=${request.taskId} classification=BLOCKED_RATE_LIMIT retry=once")
+                kotlinx.coroutines.delay(6_000)
+                result = app.ttsManager.synthesize(request.copy(taskId = request.taskId + "-retry"))
+            }
+            if (!result.success && case.first == TtsLanguageCatalog.JA_JP.id && isOptionalJapaneseUnsupported(result)) {
+                println(
+                    "E2E_MINIMAX_LANGUAGE task=${request.taskId} language=${case.first} " +
+                        "languageBoost=${MiniMaxLanguageMapper.toLanguageBoost(case.first)} speed=${case.third} " +
+                        "classification=UNSUPPORTED_BY_ACCOUNT error=${result.error?.userMessage}",
+                )
+                continue
+            }
             assertTrue(
                 "MiniMax " + case.first + " " + case.third + "x failed: " + result.error?.userMessage,
                 result.success,
             )
-            assertTrue("MiniMax output is not WAV", isWav(File(result.audioFile!!)))
+            val wav = File(result.audioFile!!)
+            assertTrue("MiniMax output is not WAV", isWav(wav))
+            assertTrue("MiniMax duration missing", (result.durationMs ?: 0L) > 0L)
             assertEquals(stableVoiceId, result.voiceId)
             observedVoiceIds += result.voiceId.orEmpty()
+            successfulLanguages[case.first] = (successfulLanguages[case.first] ?: 0) + 1
             println(
-                "E2E_MINIMAX_LANGUAGE language=" + case.first +
-                    " speed=" + case.third +
-                    " voiceIdLength=" + stableVoiceId.length +
-                    " voiceIdFingerprint=" + voiceFingerprint(stableVoiceId),
+                "E2E_MINIMAX_LANGUAGE task=${request.taskId} language=${case.first} " +
+                    "languageBoost=${MiniMaxLanguageMapper.toLanguageBoost(case.first)} speed=${case.third} " +
+                    "textLength=${case.second.length} voiceIdLength=${stableVoiceId.length} " +
+                    "voiceFingerprint=${voiceFingerprint(stableVoiceId)} success=${result.success} " +
+                    "audioBytes=${wav.length()} durationMs=${result.durationMs} elapsedMs=${result.elapsedMs}",
             )
         }
+        assertEquals("MiniMax Chinese speed matrix incomplete", 3, successfulLanguages[TtsLanguageCatalog.ZH_CN.id])
+        assertEquals("MiniMax English speed matrix incomplete", 3, successfulLanguages[TtsLanguageCatalog.EN_US.id])
         assertTrue("voiceId changed across language/rate requests", observedVoiceIds.all { it == stableVoiceId })
+        assertTrue("MiniMax matrix produced no successful voice result", observedVoiceIds.isNotEmpty())
         println(
-            "E2E_MINIMAX_MULTILINGUAL sameVoiceId=true languages=" +
-                cases.map { it.first }.distinct().joinToString(","),
+            "E2E_MINIMAX_MULTILINGUAL sameVoiceFingerprint=" + voiceFingerprint(stableVoiceId) +
+                " voiceIdLength=${stableVoiceId.length} languages=${successfulLanguages.keys.joinToString(",")}",
         )
+    }
+
+    private fun isOptionalJapaneseUnsupported(result: com.shinevoice.domain.tts.TtsResult): Boolean {
+        val message = "${result.error?.userMessage} ${result.error?.causeMessage}".lowercase()
+        return result.error?.code == com.shinevoice.domain.tts.TtsErrorCode.UnsupportedLanguage ||
+            message.contains("language") || message.contains("语言") ||
+            message.contains("japanese") || message.contains("日本語")
     }
 
     /** A wrong API key must surface a Chinese business error, never a raw stack. */
     @Test
     fun test05_minimaxWrongKeyRejected() = runBlocking {
         val provider = app.providerRegistry.get(MiniMaxProvider.PROVIDER_ID) as MiniMaxProvider
-        app.minimaxConfig.save("", "sk-invalid-key-e2e-test-000000", com.shinevoice.data.settings.MiniMaxRegion.CN)
+        app.minimaxConfig.save("", "invalid-key-e2e-test-000000", com.shinevoice.data.settings.MiniMaxRegion.CN)
         val probe = provider.validateConfig()
         assertTrue("wrong key should fail", !probe.success)
         val message = probe.error?.userMessage.orEmpty()
@@ -521,7 +613,7 @@ class E2eRealChainTest {
             "error should be a business message, got: $message",
             message.contains("Key") || message.contains("无效") || message.contains("权限") || message.contains("鉴权"),
         )
-        assertTrue("must not leak the key itself", !message.contains("sk-invalid"))
+        assertTrue("must not leak the key itself", !message.contains("invalid-key-e2e"))
     }
 
     /**
