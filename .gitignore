@@ -28,7 +28,13 @@ Thumbs.db
 # WorkBuddy local workspace data
 .workbuddy/
 
+# ZCode session config
+.zcode/
+
 # Native build output
 .externalNativeBuild/
 .cxx/
 app/src/main/assets/bundled/
+
+# Local agent scratch (probes, screenshots, pulled samples)
+tmp/
