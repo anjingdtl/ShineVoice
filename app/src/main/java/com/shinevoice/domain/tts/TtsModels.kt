@@ -13,6 +13,8 @@ enum class TtsErrorCode {
     NetworkUnavailable,
     ApiUnauthorized,
     ApiRateLimited,
+    ApiInsufficientBalance,
+    ApiProtocolError,
     ApiServerError,
     GenerationTimeout,
     NativeRuntimeError,
