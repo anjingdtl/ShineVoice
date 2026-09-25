@@ -215,27 +215,45 @@ class PlaybackService : Service() {
         .build()
 
     private fun requestFocus(): Boolean {
-        val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(playbackAttributes())
-            .setOnAudioFocusChangeListener { change ->
-                when (change) {
-                    AudioManager.AUDIOFOCUS_LOSS,
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
-                    -> {
-                        // Interruptions cancel this playback round entirely;
-                        // never auto-resume over another app.
-                        stopSelfPlaying("播放被其他应用中断")
-                    }
-                }
+        // AudioFocusRequest exists from API 26; minSdk is 24, so pre-O devices
+        // use the deprecated listener-based API with the same policy.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(playbackAttributes())
+                .setOnAudioFocusChangeListener(::handleFocusChange)
+                .build()
+                .also { focusRequest = it }
+            audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                ::handleFocusChange,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN,
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun handleFocusChange(change: Int) {
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+            -> {
+                // Interruptions cancel this playback round entirely;
+                // never auto-resume over another app.
+                stopSelfPlaying("播放被其他应用中断")
             }
-            .build()
-            .also { focusRequest = it }
-        return audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
     }
 
     private fun abandonFocus() {
-        focusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { runCatching { audioManager.abandonAudioFocusRequest(it) } }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching { audioManager.abandonAudioFocus(::handleFocusChange) }
+        }
     }
 
     /** Reads the ACTUAL output device; never pretends speaker when routed elsewhere. */
