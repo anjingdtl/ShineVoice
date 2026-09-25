@@ -8,11 +8,13 @@ import java.io.File
 class ReferenceAudioImporter(private val context: Context) {
 
     /**
-     * Copies the picked file into [profileDir]/source.<ext>, decodes it to mono
-     * 16-bit PCM at TARGET_SAMPLE_RATE, and writes [profileDir]/reference.wav.
-     * Returns the final reference WAV on success.
+     * Copies the picked file into [profileDir]/source.<ext> (kept for future
+     * re-normalization), decodes it, and runs the SAME normalization pipeline
+     * as in-app recording ([AudioNormalizer]): mono 16-bit PCM at
+     * TARGET_SAMPLE_RATE, anti-aliased resampling, atomic replacement of
+     * reference.wav. Returns the reference WAV and its quality report.
      */
-    fun import(uri: Uri, profileDir: File): Result<File> = runCatching {
+    fun import(uri: Uri, profileDir: File): Result<AudioNormalizer.Output> = runCatching {
         profileDir.mkdirs()
         val displayName = (context.contentResolver.query(
             uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null,
@@ -24,16 +26,20 @@ class ReferenceAudioImporter(private val context: Context) {
             .lowercase()
             .ifBlank { "audio" }
         val source = File(profileDir, "source.$extension")
+        // Copy through a temp file so a previously imported source is never
+        // left half-overwritten.
+        val sourceTmp = File(profileDir, "source.$extension.incoming")
         context.contentResolver.openInputStream(uri)?.use { input ->
-            source.outputStream().use { output -> input.copyTo(output) }
+            sourceTmp.outputStream().use { output -> input.copyTo(output) }
         } ?: throw IllegalArgumentException("无法读取所选音频文件")
+        if (!sourceTmp.renameTo(source)) {
+            sourceTmp.copyTo(source, overwrite = true)
+            sourceTmp.delete()
+        }
 
         val decoded = AudioCodecDecoder.decodeToPcm(source)
             ?: throw IllegalArgumentException("不支持的音频格式，或文件已损坏（支持 WAV/MP3/M4A/AAC）")
         val reference = File(profileDir, "reference.wav")
-        check(MonoWavWriter.write(reference, decoded.samples, decoded.sampleRate)) {
-            "参考音频写入失败"
-        }
-        reference
+        AudioNormalizer.normalize(decoded, reference).getOrThrow()
     }
 }

@@ -105,12 +105,14 @@ class VoiceProfileManager(
         id: String,
         referenceAudioPath: String? = null,
         referenceText: String? = null,
+        sourceAudioPath: String? = null,
     ) {
         val existing = dao.getById(id) ?: return
         dao.insert(
             existing.copy(
                 referenceAudioPath = referenceAudioPath ?: existing.referenceAudioPath,
                 referenceText = referenceText?.takeIf { it.isNotBlank() } ?: existing.referenceText,
+                sourceAudioPath = sourceAudioPath ?: existing.sourceAudioPath,
                 updatedAt = System.currentTimeMillis(),
             ),
         )

@@ -1,6 +1,7 @@
 package com.shinevoice.provider.sherpa
 
 import com.shinevoice.core.audio.AudioSpeedScaler
+import com.shinevoice.core.audio.WavDurationReader
 import com.shinevoice.core.log.AppLogger
 import com.shinevoice.core.model.AudioFormat
 import com.shinevoice.core.storage.ModelDirectoryResolver
@@ -137,29 +138,56 @@ class SherpaZipVoiceProvider(
             }
             if (audio.samples.isEmpty() || audio.sampleRate <= 0) {
                 failure(request, elapsed(startedAt), TtsErrorCode.NativeRuntimeError, "Native Runtime 未返回有效音频。")
+            } else if (audio.samples.any { !it.isFinite() }) {
+                // NaN/Inf must never reach storage; the native clamped writer
+                // would turn them into garbage instead of failing loudly.
+                logger.e("ZipVoice output contained non-finite samples task=${request.taskId}")
+                failure(request, elapsed(startedAt), TtsErrorCode.NativeRuntimeError, "本地生成输出异常（含非有限值），已丢弃。")
             } else {
                 val output = wavStorage.generatedFile(request.taskId)
                 if (!audio.save(output.absolutePath)) {
                     failure(request, elapsed(startedAt), TtsErrorCode.StorageError, "生成 WAV 保存失败。")
                 } else {
-                    val audioDurationMs = audio.samples.size.toLong() * 1000L / audio.sampleRate
-                    val elapsedMs = elapsed(startedAt)
-                    logger.i(
-                        "ZipVoice generated task=${request.taskId} textLength=${request.text.length} " +
-                            "nativeSpeed=$nativeSpeed requestedSpeed=${request.speed} " +
-                            "elapsedMs=$elapsedMs audioDurationMs=$audioDurationMs sampleRate=${audio.sampleRate}",
-                    )
-                    TtsResult(
-                        taskId = request.taskId,
-                        providerId = id,
-                        success = true,
-                        audioFile = output.absolutePath,
-                        durationMs = audioDurationMs,
-                        sampleRate = audio.sampleRate,
-                        model = ModelDirectoryResolver.ZIPVOICE_MODEL_ID,
-                        voiceId = request.voiceId ?: DEFAULT_VOICE_ID,
-                        elapsedMs = elapsedMs,
-                    )
+                    // Reload-and-verify: a success history entry requires a
+                    // parsable file whose duration matches the returned audio,
+                    // not merely that save() returned true.
+                    val expectedMs = audio.samples.size.toLong() * 1000L / audio.sampleRate
+                    val rereadMs = WavDurationReader.durationMs(output)
+                    if (rereadMs == null || rereadMs <= 0L ||
+                        rereadMs < expectedMs / 2 || rereadMs > expectedMs * 2
+                    ) {
+                        output.delete()
+                        logger.e(
+                            "ZipVoice reload verification failed task=${request.taskId} " +
+                                "expectedMs=$expectedMs rereadMs=$rereadMs",
+                        )
+                        failure(
+                            request,
+                            elapsed(startedAt),
+                            TtsErrorCode.StorageError,
+                            "生成文件校验失败（时长不符），已丢弃，不会记录为成功。",
+                        )
+                    } else {
+                        val audioDurationMs = expectedMs
+                        val elapsedMs = elapsed(startedAt)
+                        logger.i(
+                            "ZipVoice generated task=${request.taskId} textLength=${request.text.length} " +
+                                "nativeSpeed=$nativeSpeed requestedSpeed=${request.speed} " +
+                                "elapsedMs=$elapsedMs audioDurationMs=$audioDurationMs rereadMs=$rereadMs " +
+                                "sampleRate=${audio.sampleRate}",
+                        )
+                        TtsResult(
+                            taskId = request.taskId,
+                            providerId = id,
+                            success = true,
+                            audioFile = output.absolutePath,
+                            durationMs = audioDurationMs,
+                            sampleRate = audio.sampleRate,
+                            model = ModelDirectoryResolver.ZIPVOICE_MODEL_ID,
+                            voiceId = request.voiceId ?: DEFAULT_VOICE_ID,
+                            elapsedMs = elapsedMs,
+                        )
+                    }
                 }
             }
         } catch (cancelled: CancellationException) {
