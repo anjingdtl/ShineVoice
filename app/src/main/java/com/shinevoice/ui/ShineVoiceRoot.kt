@@ -48,7 +48,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.audio.PlaybackRoute
-import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.settings.ThemeMode
 import com.shinevoice.domain.tts.TtsResult
 import com.shinevoice.ui.cyber.CyberBackground
@@ -69,7 +68,6 @@ private enum class AppPage(val title: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 fun ShineVoiceRoot(
     viewModel: MainViewModel,
-    playbackController: AudioPlaybackController,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -91,18 +89,8 @@ fun ShineVoiceRoot(
         }
     }
 
-    DisposableEffect(playbackController) {
-        playbackController.onCompletion = { viewModel.setNowPlaying(null, null) }
-        onDispose {
-            playbackController.onCompletion = null
-            playbackController.release()
-        }
-    }
-
-    // 路由变化即时生效：空闲时供下次播放使用，播放中会按新路由续播。
-    LaunchedEffect(state.playbackRoute) {
-        playbackController.updateRoute(state.playbackRoute)
-    }
+    // Playback now lives in PlaybackService; the UI only mirrors its state.
+    // The settings route change is applied by the service itself.
 
     // Automatic update checks start only after the normal Compose surface is
     // mounted, so Splash/model/database startup is never blocked.
@@ -166,8 +154,16 @@ fun ShineVoiceRoot(
                     onPlaybackRouteChanged = viewModel::onPlaybackRouteChanged,
                     onPlay = {
                         val source = state.lastResult?.audioFile?.let(::File)
-                        if (source != null) playbackController.play(source)
-                            .onFailure { Toast.makeText(context, "播放失败：${it.message}", Toast.LENGTH_LONG).show() }
+                        if (source != null && source.isFile) {
+                            com.shinevoice.core.playback.PlaybackService.Hub.play(
+                                context,
+                                state.lastResult?.taskId ?: "create",
+                                source.absolutePath,
+                                state.targetText.take(24).ifBlank { "生成语音" },
+                            )
+                        } else {
+                            Toast.makeText(context, "没有可播放的音频。", Toast.LENGTH_SHORT).show()
+                        }
                     },
                     onSave = { saveLauncher.launch("shinevoice-${System.currentTimeMillis()}.wav") },
                     onShare = {
@@ -198,14 +194,12 @@ fun ShineVoiceRoot(
                     state = state,
                     padding = padding,
                     application = application,
-                    playbackController = playbackController,
                     viewModel = viewModel,
                 )
                 AppPage.HISTORY -> HistoryScreen(
                     state = state,
                     padding = padding,
                     application = application,
-                    playbackController = playbackController,
                     viewModel = viewModel,
                 )
                 AppPage.SETTINGS -> SettingsScreen(

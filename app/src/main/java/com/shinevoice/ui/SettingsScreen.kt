@@ -132,89 +132,30 @@ fun SettingsScreen(
             }
         }
         item {
-            CyberCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("云端高清（MiniMax）", fontWeight = FontWeight.Medium, color = colors.textPrimary, modifier = Modifier.weight(1f))
-                    CyberStatusChip(
-                        text = when {
-                            state.minimaxStatus == "连接正常" -> "ONLINE"
-                            state.minimaxStatus == "未配置" -> "未配置"
-                            else -> state.minimaxStatus
-                        },
-                        state = when {
-                            state.minimaxStatus == "连接正常" -> CyberChipState.OK
-                            state.minimaxStatus == "未配置" -> CyberChipState.OFF
-                            else -> CyberChipState.WARN
-                        },
-                        pulse = state.minimaxStatus == "连接正常",
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("服务区域", style = CyberType.terminalLabel, color = colors.textMuted)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MiniMaxRegion.entries.forEach { region ->
-                        CyberFilterChip(
-                            selected = state.minimaxRegion == region,
-                            label = region.displayName,
-                            onClick = { viewModel.onMinimaxRegionChanged(region) },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                CyberTextField(
-                    value = state.minimaxGroupId,
-                    onValueChange = viewModel::onMinimaxGroupIdChanged,
-                    label = "Group ID（选填，仅旧版账号需要）",
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                CyberTextField(
-                    value = state.minimaxApiKey,
-                    onValueChange = viewModel::onMinimaxApiKeyChanged,
-                    label = "API Key（加密存储，仅本机可见）",
-                    singleLine = true,
-                    password = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CyberButton(text = "保存并测试连接", onClick = {
-                        viewModel.saveMinimaxConfig { ok, msg ->
-                            Toast.makeText(
-                                context,
-                                if (ok) "云端连接正常。" else "云端保存/连接失败：$msg",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    })
-                    CyberOutlinedButton(text = "测试连接", onClick = viewModel::testMinimaxConnection)
-                    CyberOutlinedButton(text = "清除配置", onClick = viewModel::clearMinimaxConfig, tint = colors.danger)
-                }
-                if (state.minimaxClonedVoices.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "云端音色：${state.minimaxClonedVoices.joinToString { it.displayName }}",
-                        fontSize = 12.sp,
-                        color = colors.textMuted,
-                    )
-                }
-            }
+            CloudSetupCard(state = state, viewModel = viewModel)
         }
         item {
             CyberCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("系统语音", fontWeight = FontWeight.Medium, color = colors.textPrimary, modifier = Modifier.weight(1f))
+                    Text(
+                        "系统语音",
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    val systemReady = state.systemStatus.contains("已选择") || state.systemStatus.contains("已就绪")
                     CyberStatusChip(
-                        text = state.systemStatus.ifBlank { "未检测" },
-                        state = if (state.systemStatus.contains("已选择") || state.systemStatus.contains("已就绪")) {
-                            CyberChipState.OK
-                        } else {
-                            CyberChipState.INFO
-                        },
+                        text = if (systemReady) "可用" else "未检测",
+                        state = if (systemReady) CyberChipState.OK else CyberChipState.INFO,
+                        pulse = systemReady,
                     )
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    state.systemStatus.ifBlank { "尚未检测系统语音引擎。" },
+                    fontSize = 12.sp,
+                    color = colors.textMuted,
+                )
                 if (state.systemEngines.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text("语音引擎", style = CyberType.terminalLabel, color = colors.textMuted)
@@ -615,6 +556,240 @@ private data class SystemVoiceGroup(
     val label: String,
     val voices: List<TtsVoice>,
 )
+
+/**
+ * 云端高清设置卡片。标题行只放短状态（未配置/测试中/可连接/失败），完整
+ * 诊断独立成行可换行；主按钮独占一行，次要按钮一行；Group ID 收进高级
+ * 兼容设置；Key 默认隐藏可切换显示。
+ */
+@Composable
+private fun CloudSetupCard(state: MainUiState, viewModel: MainViewModel) {
+    val context = LocalContext.current
+    val colors = LocalCyberColors.current
+    val cloud = state.cloudSetup
+    var showKey by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
+    var showVoicePicker by remember { mutableStateOf(false) }
+
+    CyberCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "云端高清（MiniMax）",
+                fontWeight = FontWeight.Medium,
+                color = colors.textPrimary,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+            )
+            CyberStatusChip(
+                text = when (cloud.phase) {
+                    CloudSetupPhase.UNCONFIGURED -> "未配置"
+                    CloudSetupPhase.SAVED_UNTESTED -> "已保存"
+                    CloudSetupPhase.TESTING -> "测试中"
+                    CloudSetupPhase.REACHABLE -> "可连接"
+                    CloudSetupPhase.FAILED -> "失败"
+                },
+                state = when (cloud.phase) {
+                    CloudSetupPhase.UNCONFIGURED -> CyberChipState.OFF
+                    CloudSetupPhase.SAVED_UNTESTED -> CyberChipState.INFO
+                    CloudSetupPhase.TESTING -> CyberChipState.WARN
+                    CloudSetupPhase.REACHABLE -> CyberChipState.OK
+                    CloudSetupPhase.FAILED -> CyberChipState.ERROR
+                },
+                pulse = cloud.phase == CloudSetupPhase.REACHABLE,
+            )
+        }
+        // 完整诊断/结果独立整行，允许换行，不再挤进标题行。
+        cloud.detail?.let { detail ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                fontSize = 12.sp,
+                color = when (cloud.phase) {
+                    CloudSetupPhase.REACHABLE -> colors.success
+                    CloudSetupPhase.FAILED -> colors.danger
+                    else -> colors.textMuted
+                },
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("服务区域", style = CyberType.terminalLabel, color = colors.textMuted)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MiniMaxRegion.entries.forEach { region ->
+                CyberFilterChip(
+                    selected = state.minimaxRegion == region,
+                    label = region.displayName,
+                    onClick = { viewModel.onMinimaxRegionChanged(region) },
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        val keyLabel = when {
+            cloud.keyUndecryptable -> "API Key（本机密钥无法读取，请重新填写）"
+            cloud.phase == CloudSetupPhase.UNCONFIGURED -> "API Key（加密存储，仅本机可见）"
+            else -> "API Key（已保存；留空表示保持不变）"
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                CyberTextField(
+                    value = state.minimaxApiKey,
+                    onValueChange = viewModel::onMinimaxApiKeyChanged,
+                    label = keyLabel,
+                    singleLine = true,
+                    password = !showKey,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.padding(3.dp))
+            CyberOutlinedButton(
+                text = if (showKey) "隐藏" else "显示",
+                onClick = { showKey = !showKey },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        CyberOutlinedButton(
+            text = if (showAdvanced) "高级兼容设置 ▴" else "高级兼容设置 ▾",
+            onClick = { showAdvanced = !showAdvanced },
+        )
+        if (showAdvanced) {
+            Spacer(Modifier.height(8.dp))
+            CyberTextField(
+                value = state.minimaxGroupId,
+                onValueChange = viewModel::onMinimaxGroupIdChanged,
+                label = "Group ID（选填，仅旧版账号需要）",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        CyberButton(
+            text = if (cloud.phase == CloudSetupPhase.TESTING) "测试中……" else "保存并测试",
+            onClick = {
+                viewModel.saveMinimaxConfig { ok, msg ->
+                    Toast.makeText(
+                        context,
+                        if (ok) "云端连接正常。" else "云端保存/连接失败：$msg",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            },
+            enabled = cloud.phase != CloudSetupPhase.TESTING,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CyberOutlinedButton(
+                text = "测试当前配置",
+                onClick = viewModel::testMinimaxConnection,
+                enabled = cloud.phase != CloudSetupPhase.TESTING,
+            )
+            CyberOutlinedButton(
+                text = "清除配置",
+                onClick = viewModel::clearMinimaxConfig,
+                tint = colors.danger,
+                enabled = cloud.phase != CloudSetupPhase.TESTING,
+            )
+        }
+        // 云端音色：官方音色直接可选，无需先克隆。
+        if (cloud.phase == CloudSetupPhase.REACHABLE) {
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = colors.outline)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        cloud.selectedOfficialVoiceName?.let { "已选音色：$it" }
+                            ?: "尚未选择云端音色",
+                        fontSize = 13.sp,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                    )
+                    Text(
+                        "官方音色 ${cloud.officialVoices.size} 个 · 克隆音色 ${cloud.clonedVoices.size} 个",
+                        style = CyberType.terminalLabel,
+                        color = colors.textMuted,
+                        maxLines = 1,
+                    )
+                }
+                CyberOutlinedButton(text = "选择音色  ▼", onClick = { showVoicePicker = true })
+            }
+            Spacer(Modifier.height(8.dp))
+            CyberButton(
+                text = if (cloud.testingSynthesis) "生成中……" else "生成测试语音",
+                onClick = viewModel::runCloudSynthesisCheck,
+                enabled = !cloud.testingSynthesis && cloud.selectedOfficialVoiceId != null,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "会调用计费接口，用当前选择的云端音色合成一句短语音。",
+                fontSize = 11.sp,
+                color = colors.textMuted,
+            )
+            cloud.lastSynthesisCheckMessage?.let { message ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    message,
+                    fontSize = 12.sp,
+                    color = if (cloud.lastSynthesisCheckOk == true) colors.success else colors.danger,
+                )
+            }
+        }
+    }
+
+    if (showVoicePicker) {
+        CyberDialog(
+            onDismissRequest = { showVoicePicker = false },
+            title = "选择云端音色",
+            code = "CLOUD VOICE SELECTOR",
+            modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp).heightIn(max = 680.dp),
+            actions = {
+                CyberOutlinedButton(text = "关闭", onClick = { showVoicePicker = false })
+            },
+        ) {
+            Text(
+                "官方音色无需克隆即可生成；克隆音色来自你的录音。",
+                fontSize = 11.sp,
+                color = colors.textMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (cloud.clonedVoices.isNotEmpty()) {
+                    Text("克隆音色（${cloud.clonedVoices.size}）", style = CyberType.sectionCode, color = colors.cyan)
+                    cloud.clonedVoices.forEach { voice ->
+                        CyberRadioRow(
+                            selected = cloud.selectedOfficialVoiceId == voice.id,
+                            enabled = true,
+                            title = voice.displayName,
+                            onClick = {
+                                viewModel.selectCloudVoice(voice.id)
+                                showVoicePicker = false
+                            },
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                Text("官方音色（${cloud.officialVoices.size}）", style = CyberType.sectionCode, color = colors.cyan)
+                cloud.officialVoices.forEach { voice ->
+                    CyberRadioRow(
+                        selected = cloud.selectedOfficialVoiceId == voice.id,
+                        enabled = true,
+                        title = voice.displayName,
+                        onClick = {
+                            viewModel.selectCloudVoice(voice.id)
+                            showVoicePicker = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
 
 private fun groupSystemVoices(voices: List<TtsVoice>): List<SystemVoiceGroup> {
     return voices

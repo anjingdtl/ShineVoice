@@ -151,13 +151,29 @@ fun CreateScreen(
                         )
                     }
                 }
-                if (isCloudMode && state.currentVoice?.minimaxVoiceId == null) {
+                if (isCloudMode) {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        "当前音色还没有云端音色，请到音色库克隆。",
-                        fontSize = 12.sp,
-                        color = colors.accent,
-                    )
+                    when {
+                        !state.cloudSetup.configured ->
+                            Text(
+                                "云端服务尚未配置，请到「设置」填写 API Key 并测试连接。",
+                                fontSize = 12.sp,
+                                color = colors.accent,
+                            )
+                        state.currentVoice?.minimaxVoiceId != null -> Unit
+                        state.cloudSetup.selectedOfficialVoiceId != null ->
+                            Text(
+                                "将使用官方音色：${state.cloudSetup.selectedOfficialVoiceName ?: ""}",
+                                fontSize = 12.sp,
+                                color = colors.textMuted,
+                            )
+                        else ->
+                            Text(
+                                "当前音色没有云端克隆。可在「设置 → 云端高清」选择官方音色直接生成，或在音色库克隆。",
+                                fontSize = 12.sp,
+                                color = colors.accent,
+                            )
+                    }
                 }
             }
         }
@@ -254,13 +270,17 @@ fun CreateScreen(
                     text = when {
                         state.isGenerating -> "生成中……"
                         state.stabilityRunning -> "测试中 ${state.stabilityCompleted}/20"
-                        isCloudMode && state.currentVoice?.minimaxVoiceId == null -> "先克隆云端音色"
+                        isCloudMode && !state.cloudSetup.configured -> "请先配置云端"
+                        isCloudMode && state.currentVoice?.minimaxVoiceId == null &&
+                            state.cloudSetup.selectedOfficialVoiceId == null -> "请先选择云端音色"
                         else -> "生成语音"
                     },
                     onClick = onGenerate,
                     enabled = !state.isGenerating && !state.stabilityRunning && !(
                         isCloudMode &&
-                            (state.minimaxStatus == "未配置" || state.currentVoice?.minimaxVoiceId == null)
+                            (!state.cloudSetup.configured ||
+                                (state.currentVoice?.minimaxVoiceId == null &&
+                                    state.cloudSetup.selectedOfficialVoiceId == null))
                         ),
                     modifier = Modifier.fillMaxWidth(),
                 )

@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.shinevoice.ShineVoiceApplication
 import com.shinevoice.core.storage.AudioExporter
-import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.db.GenerationHistoryEntity
 import com.shinevoice.domain.tts.TtsLanguageCatalog
 import com.shinevoice.ui.cyber.CyberButton
@@ -69,7 +68,6 @@ fun HistoryScreen(
     state: MainUiState,
     padding: PaddingValues,
     application: ShineVoiceApplication,
-    playbackController: AudioPlaybackController,
     viewModel: MainViewModel,
 ) {
     val context = LocalContext.current
@@ -110,9 +108,14 @@ fun HistoryScreen(
             Toast.makeText(context, "音频文件不存在（可能已被删除）。", Toast.LENGTH_SHORT).show()
             return
         }
-        playbackController.play(file)
-            .onSuccess { viewModel.setNowPlaying(item.taskId, item.inputText) }
-            .onFailure { Toast.makeText(context, "播放失败：${it.message}", Toast.LENGTH_LONG).show() }
+        // All playback funnels through the shared PlaybackService so pages,
+        // the notification and the overlay button control one player.
+        com.shinevoice.core.playback.PlaybackService.Hub.play(
+            context,
+            item.taskId,
+            file.absolutePath,
+            item.inputText.take(24).ifBlank { "生成语音" },
+        )
     }
 
     fun shareSelected() {
@@ -172,13 +175,16 @@ fun HistoryScreen(
                 code = "语音档案记录",
                 modifier = Modifier.weight(1f),
                 trailing = {
-                    if (selectMode) {
-                        CyberOutlinedButton(text = "完成", onClick = {
-                            selectMode = false
-                            viewModel.exitHistorySelection()
-                        })
-                    } else {
-                        CyberOutlinedButton(text = "选择", onClick = { selectMode = true })
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OverlayPlaybackEntry(compact = true)
+                        if (selectMode) {
+                            CyberOutlinedButton(text = "完成", onClick = {
+                                selectMode = false
+                                viewModel.exitHistorySelection()
+                            })
+                        } else {
+                            CyberOutlinedButton(text = "选择", onClick = { selectMode = true })
+                        }
                     }
                 },
             )
@@ -262,11 +268,11 @@ fun HistoryScreen(
             }
         }
 
-        state.nowPlayingTaskId?.let { playingId ->
+        state.nowPlayingTaskId?.let { _ ->
             MiniPlayerBar(
                 title = state.nowPlayingTitle ?: "正在播放",
                 onStop = {
-                    playbackController.stop()
+                    com.shinevoice.core.playback.PlaybackService.Hub.stop(context)
                     viewModel.setNowPlaying(null, null)
                 },
             )

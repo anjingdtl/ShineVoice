@@ -34,9 +34,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.shinevoice.ShineVoiceApplication
+import com.shinevoice.core.audio.AudioNormalizer
+import com.shinevoice.core.audio.RecordingLimits
+import com.shinevoice.core.audio.RecordingResult
+import com.shinevoice.core.audio.RecordingSession
 import com.shinevoice.core.audio.TARGET_SAMPLE_RATE
-import com.shinevoice.core.audio.VoiceRecorder
-import com.shinevoice.core.storage.AudioPlaybackController
 import com.shinevoice.data.db.VoiceProfileEntity
 import com.shinevoice.ui.cyber.CyberButton
 import com.shinevoice.ui.cyber.CyberCard
@@ -70,7 +72,6 @@ fun VoicesScreen(
     state: MainUiState,
     padding: PaddingValues,
     application: ShineVoiceApplication,
-    playbackController: AudioPlaybackController,
     viewModel: MainViewModel,
 ) {
     val context = LocalContext.current
@@ -81,12 +82,14 @@ fun VoicesScreen(
     var profileReferenceText by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var recordingId by remember { mutableStateOf<String?>(null) }
+    var processingId by remember { mutableStateOf<String?>(null) }
     var pendingImportId by remember { mutableStateOf<String?>(null) }
     var pendingRecordId by remember { mutableStateOf<String?>(null) }
     var deletingProfile by remember { mutableStateOf<VoiceProfileEntity?>(null) }
     var renamingProfile by remember { mutableStateOf<VoiceProfileEntity?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var recorder by remember { mutableStateOf<VoiceRecorder?>(null) }
+    var recordingSession by remember { mutableStateOf<RecordingSession?>(null) }
+    var recordingStartedAt by remember { mutableStateOf(0L) }
 
     fun checkPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -98,14 +101,32 @@ fun VoicesScreen(
         val profileId = pendingImportId
         pendingImportId = null
         if (uri == null || profileId == null) return@rememberLauncherForActivityResult
+        processingId = profileId
         scope.launch {
             val dir = application.voiceProfileManager.profileDir(profileId)
             val result = withContext(Dispatchers.IO) {
                 application.audioImporter.import(uri, dir)
             }
-            result.onSuccess { reference ->
-                viewModel.attachVoiceAudio(profileId, reference.absolutePath, null)
-                Toast.makeText(context, "音频已导入并标准化为 ${TARGET_SAMPLE_RATE} Hz WAV。", Toast.LENGTH_SHORT).show()
+            processingId = null
+            result.onSuccess { output ->
+                viewModel.attachVoiceAudio(
+                    profileId,
+                    output.referenceFile.absolutePath,
+                    null,
+                    output.referenceFile.parentFile?.let { f ->
+                        f.listFiles()?.firstOrNull { it.name.startsWith("source.") }?.absolutePath
+                    },
+                )
+                val warnings = output.report.warnings
+                Toast.makeText(
+                    context,
+                    if (warnings.isEmpty()) {
+                        "音频已导入并标准化为 ${TARGET_SAMPLE_RATE} Hz WAV。"
+                    } else {
+                        "已导入，但建议注意：${warnings.joinToString("；")}"
+                    },
+                    Toast.LENGTH_LONG,
+                ).show()
             }.onFailure { error ->
                 Toast.makeText(context, "导入失败：${error.message}", Toast.LENGTH_LONG).show()
             }
@@ -115,29 +136,79 @@ fun VoicesScreen(
     fun startRecording(profileId: String) {
         val dir = application.voiceProfileManager.profileDir(profileId)
         dir.mkdirs()
-        val wav = File(dir, "reference.wav")
-        val newRecorder = VoiceRecorder(wav)
-        recorder = newRecorder
+        // The raw capture goes to raw.wav (kept as source for re-normalization);
+        // reference.wav is only replaced after normalization succeeds.
+        val rawFile = File(dir, "raw.wav")
+        val session = RecordingSession(rawFile)
+        recordingSession = session
         recordingId = profileId
-        if (newRecorder.start()) {
-            Toast.makeText(context, "正在录音，再次点击停止。", Toast.LENGTH_SHORT).show()
+        recordingStartedAt = System.currentTimeMillis()
+        if (session.start()) {
+            Toast.makeText(
+                context,
+                "正在录音（建议 ${RecordingLimits.RECOMMENDED_MIN_MS / 1000}~${RecordingLimits.RECOMMENDED_MAX_MS / 1000} 秒），再次点击停止。",
+                Toast.LENGTH_SHORT,
+            ).show()
         } else {
             recordingId = null
-            recorder = null
-            Toast.makeText(context, newRecorder.lastError() ?: "录音启动失败，请检查权限。", Toast.LENGTH_LONG).show()
+            recordingSession = null
+            Toast.makeText(context, session.lastError() ?: "录音启动失败，请检查权限。", Toast.LENGTH_LONG).show()
         }
     }
 
     fun stopRecording(profileId: String) {
-        val ok = recorder?.stop() == true
-        recorder = null
+        val session = recordingSession ?: return
         recordingId = null
-        if (ok) {
-            val wav = File(application.voiceProfileManager.profileDir(profileId), "reference.wav")
-            viewModel.attachVoiceAudio(profileId, wav.absolutePath, null)
-            Toast.makeText(context, "录音完成并保存为参考音频。", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "录音太短或失败，请重试。", Toast.LENGTH_LONG).show()
+        processingId = profileId
+        scope.launch {
+            // stop() is a suspend: the worker thread owns the AudioRecord and
+            // the UI thread never joins it.
+            val result = session.stop()
+            recordingSession = null
+            if (result == null) {
+                processingId = null
+                Toast.makeText(context, "录音停止超时，请重试。", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            when (result) {
+                is RecordingResult.Success -> {
+                    val dir = application.voiceProfileManager.profileDir(profileId)
+                    val reference = File(dir, "reference.wav")
+                    val normalized = withContext(Dispatchers.IO) {
+                        AudioNormalizer.normalizeWav(result.file, reference)
+                    }
+                    processingId = null
+                    normalized.fold(
+                        onSuccess = { output ->
+                            viewModel.attachVoiceAudio(
+                                profileId,
+                                output.referenceFile.absolutePath,
+                                null,
+                                result.file.absolutePath,
+                            )
+                            val durationSec = output.report.durationMs / 1000.0
+                            val warnings = output.report.warnings
+                            Toast.makeText(
+                                context,
+                                buildString {
+                                    append("录音完成（${"%.1f".format(durationSec)} 秒，已标准化为 ${TARGET_SAMPLE_RATE} Hz）。")
+                                    if (warnings.isNotEmpty()) append("建议：${warnings.joinToString("；")}")
+                                    append("请确认参考文本与新录音内容一致。")
+                                },
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        },
+                        onFailure = { error ->
+                            Toast.makeText(context, "录音处理失败：${error.message}", Toast.LENGTH_LONG).show()
+                        },
+                    )
+                }
+                is RecordingResult.Failure -> {
+                    processingId = null
+                    Toast.makeText(context, "录音失败：${result.reason}", Toast.LENGTH_LONG).show()
+                }
+                RecordingResult.Cancelled -> processingId = null
+            }
         }
     }
 
@@ -179,6 +250,7 @@ fun VoicesScreen(
                     isCurrent = profile.id == state.currentVoice?.id,
                     expanded = profile.id == expandedId,
                     recording = profile.id == recordingId,
+                    processing = profile.id == processingId,
                     systemEngines = state.systemEngines,
                     cloudCloning = state.cloudCloning,
                     onExpand = { expandedId = if (expandedId == profile.id) null else profile.id },
@@ -191,10 +263,12 @@ fun VoicesScreen(
                     onPlayReference = {
                         val file = profile.referenceAudioPath?.let(::File)
                         if (file != null && file.isFile) {
-                            playbackController.play(file)
-                                .onFailure {
-                                    Toast.makeText(context, "试听失败：${it.message}", Toast.LENGTH_LONG).show()
-                                }
+                            com.shinevoice.core.playback.PlaybackService.Hub.play(
+                                context,
+                                "reference-${profile.id}",
+                                file.absolutePath,
+                                "参考音频 · ${profile.displayName}",
+                            )
                         } else {
                             Toast.makeText(context, "该音色还没有参考音频。", Toast.LENGTH_SHORT).show()
                         }
@@ -338,6 +412,7 @@ private fun VoiceDossierCard(
     isCurrent: Boolean,
     expanded: Boolean,
     recording: Boolean,
+    processing: Boolean,
     systemEngines: List<com.shinevoice.provider.androidtts.SystemEngineInfo>,
     cloudCloning: Boolean,
     onExpand: () -> Unit,
@@ -378,6 +453,10 @@ private fun VoiceDossierCard(
                 PulsingDot(colors.danger)
                 Spacer(Modifier.padding(4.dp))
                 Text("录音中", style = CyberType.terminalLabel, color = colors.danger)
+            } else if (processing) {
+                PulsingDot(colors.accent)
+                Spacer(Modifier.padding(4.dp))
+                Text("处理中…", style = CyberType.terminalLabel, color = colors.accent)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -422,9 +501,10 @@ private fun VoiceDossierCard(
                     text = if (recording) "■ 停止录音" else "● 录音",
                     onClick = onToggleRecord,
                     tint = colors.danger,
+                    enabled = !processing,
                 )
-                CyberOutlinedButton(text = "导入音频", onClick = onImport)
-                CyberOutlinedButton(text = "重命名", onClick = onRequestRename)
+                CyberOutlinedButton(text = "导入音频", onClick = onImport, enabled = !processing)
+                CyberOutlinedButton(text = "重命名", onClick = onRequestRename, enabled = !processing)
             }
             Spacer(Modifier.height(10.dp))
             Text("系统语音绑定", style = CyberType.terminalLabel, color = colors.textMuted)

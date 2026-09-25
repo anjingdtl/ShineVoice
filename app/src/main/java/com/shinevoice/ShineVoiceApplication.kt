@@ -35,6 +35,7 @@ class ShineVoiceApplication : Application() {
     val modelResolver by lazy { ModelDirectoryResolver(this) }
     val wavStorage by lazy { WavStorage(this) }
     val settingsStore by lazy { SettingsStore(this) }
+    val overlaySettings by lazy { com.shinevoice.data.settings.OverlaySettings(this) }
     val updateManager by lazy { UpdateManager(this, settingsStore, logger) }
     val minimaxConfig by lazy { MiniMaxConfig(this) }
     val minimaxApiClient by lazy { MiniMaxApiClient() }

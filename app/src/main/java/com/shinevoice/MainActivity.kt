@@ -8,10 +8,8 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
-import com.shinevoice.core.audio.AudioRouteManager
-import com.shinevoice.core.storage.AudioPlaybackController
+import androidx.compose.runtime.setValue
 import com.shinevoice.ui.MainViewModel
 import com.shinevoice.ui.ShineVoiceSplash
 import com.shinevoice.ui.ShineVoiceRoot
@@ -20,9 +18,6 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels {
         MainViewModel.Factory(application as ShineVoiceApplication)
-    }
-    private val playbackController by lazy {
-        AudioPlaybackController(AudioRouteManager(applicationContext))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,18 +35,14 @@ class MainActivity : ComponentActivity() {
             if (showSplash) {
                 ShineVoiceSplash()
             } else {
-                ShineVoiceRoot(
-                    viewModel = appViewModel,
-                    playbackController = playbackController,
-                )
+                ShineVoiceRoot(viewModel = appViewModel)
             }
         }
     }
 
-    override fun onDestroy() {
-        playbackController.release()
-        super.onDestroy()
-    }
+    // Playback is owned by PlaybackService (foreground). Destroying the
+    // Activity only unbinds this UI; audio and the overlay session keep
+    // running so cross-app playback survives leaving the app.
 
     private companion object {
         const val SPLASH_DURATION_MS = 1_500L
