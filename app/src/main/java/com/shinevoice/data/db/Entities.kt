@@ -31,7 +31,7 @@ data class VoiceProfileEntity(
     /** Availability per provider binding, used for UI badges/状态. */
     val hasLocalBinding: Boolean get() = referenceAudioPath != null || sourceAudioPath != null
     val hasCloudBinding: Boolean get() = !minimaxVoiceId.isNullOrBlank()
-    val hasSystemBinding: Boolean get() = !androidTtsVoice.isNullOrBlank()
+    val hasSystemBinding: Boolean get() = !androidTtsEngine.isNullOrBlank() || !androidTtsVoice.isNullOrBlank()
 }
 
 @Entity(tableName = "generation_history")

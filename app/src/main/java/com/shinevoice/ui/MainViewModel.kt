@@ -760,12 +760,32 @@ class MainViewModel(
         }
     }
 
-    /** Binds a system engine + voice to a voice profile (系统 Binding). */
-    fun bindProfileSystemVoice(profileId: String, engine: String?, voiceName: String?) {
+    /**
+     * Binds a system engine + voice to a voice profile (系统 Binding). When the
+     * user has not picked a voice, falls back to the engine's live voice so the
+     * binding is real instead of silently empty.
+     */
+    fun bindProfileSystemVoice(
+        profileId: String,
+        engine: String?,
+        voiceName: String?,
+        onDone: (Boolean, String) -> Unit = { _, _ -> },
+    ) {
         viewModelScope.launch {
-            application.voiceProfileManager.updateSystemBinding(profileId, engine, voiceName)
+            // Resolve both halves from the live engine so "bind current" always
+            // reflects what synthesis would actually use right now.
+            val provider = systemTtsProvider()
+            val resolvedVoice = voiceName ?: provider?.currentVoiceName()
+            val resolvedEngine = engine ?: provider?.activeEnginePackage()
+            if (resolvedVoice == null && resolvedEngine == null) {
+                _uiState.update { it.copy(message = "系统语音不可用，绑定失败。") }
+                onDone(false, "系统语音不可用，请先在设置中确认系统 TTS 引擎。")
+                return@launch
+            }
+            application.voiceProfileManager.updateSystemBinding(profileId, resolvedEngine, resolvedVoice)
             application.voiceProfileManager.touch(profileId)
             _uiState.update { it.copy(message = "系统语音绑定已保存。") }
+            onDone(true, "已把当前系统语音绑定到该音色。")
         }
     }
 
@@ -872,6 +892,16 @@ class MainViewModel(
                         selectedOfficialVoiceId = application.minimaxConfig.defaultVoiceId.first(),
                     ),
                 )
+            }
+            // A complete stored config is re-verified in the background so the
+            // voice catalog (official + cloned) survives app restarts; the
+            // voices page binding picker depends on it.
+            if (snapshot.isComplete &&
+                keyState !is com.shinevoice.data.settings.MiniMaxKeyState.Undecryptable
+            ) {
+                cancelCloudTest()
+                val revision = cloudTestRevision.incrementAndGet()
+                cloudTestJob = viewModelScope.launch { runCloudCatalogTest(revision) }
             }
         }
     }
@@ -1135,6 +1165,23 @@ class MainViewModel(
         cloudTestJob?.cancel()
         cloudTestJob = null
         cloudTestRevision.incrementAndGet()
+    }
+
+    /**
+     * Binds an existing cloud voice (cloned or official, from the MiniMax
+     * catalog) to a profile — the no-upload path when cloning is unavailable.
+     */
+    fun bindProfileCloudVoice(profileId: String, voiceId: String, onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            if (voiceId.isBlank()) {
+                onDone(false, "云端音色无效。")
+                return@launch
+            }
+            application.voiceProfileManager.updateCloudBinding(profileId, voiceId)
+            application.voiceProfileManager.touch(profileId)
+            _uiState.update { it.copy(message = "云端音色绑定已保存。") }
+            onDone(true, "已把该云端音色绑定到此档案。")
+        }
     }
 
     /** Clones the given profile's reference audio to MiniMax and saves voice_id. */

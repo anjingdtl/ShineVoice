@@ -86,6 +86,34 @@ class AndroidSystemTtsProvider(
     /** The user's persisted engine choice; null means "system default". */
     suspend fun preferredEngine(): String? = settingsStore.systemTtsEngine.first()
 
+    /**
+     * The engine's live voice name (initializing the engine if needed); the
+     * source of truth for "当前系统语音" when the user has not picked one.
+     */
+    suspend fun currentVoiceName(): String? {
+        if (tts == null) {
+            val init = initialize()
+            if (!init.success) return null
+        }
+        return runCatching { tts?.voice?.name }.getOrNull()
+    }
+
+    /**
+     * The engine package actually serving synthesis right now (initializing
+     * the engine if needed). Unlike [currentEnginePackage] this resolves the
+     * real engine behind a "system default" choice.
+     */
+    suspend fun activeEnginePackage(): String? {
+        if (tts == null) {
+            val init = initialize()
+            if (!init.success) return null
+        }
+        // A null tracked package means the engine was created from the system
+        // default choice, so resolve the default engine's real package.
+        if (currentEnginePackage != null) return currentEnginePackage
+        return runCatching { tts?.defaultEngine }.getOrNull()
+    }
+
     /** Switches (or initializes) the engine; persists the choice. */
     suspend fun switchEngine(enginePackage: String?): ProviderResult = engineMutex.withLock {
         if (currentEnginePackage == enginePackage && tts != null) {

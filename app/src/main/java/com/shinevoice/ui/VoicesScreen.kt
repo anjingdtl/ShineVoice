@@ -14,9 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -90,6 +94,7 @@ fun VoicesScreen(
     var renameText by remember { mutableStateOf("") }
     var recordingSession by remember { mutableStateOf<RecordingSession?>(null) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
+    var cloudBindingPickerFor by remember { mutableStateOf<VoiceProfileEntity?>(null) }
 
     fun checkPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -253,6 +258,8 @@ fun VoicesScreen(
                     processing = profile.id == processingId,
                     systemEngines = state.systemEngines,
                     cloudCloning = state.cloudCloning,
+                    cloudVoicesAvailable = state.cloudSetup.phase == CloudSetupPhase.REACHABLE &&
+                        (state.cloudSetup.clonedVoices.isNotEmpty() || state.cloudSetup.officialVoices.isNotEmpty()),
                     onExpand = { expandedId = if (expandedId == profile.id) null else profile.id },
                     onSetCurrent = { viewModel.setCurrentVoice(profile.id) },
                     onRequestRename = {
@@ -294,14 +301,83 @@ fun VoicesScreen(
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     },
+                    onBindCloudVoice = { cloudBindingPickerFor = profile },
                     onBindSystemVoice = {
                         val engine = state.systemSelectedEngine
                             ?: state.systemEngines.firstOrNull { it.isSystemDefault }?.packageName
-                        viewModel.bindProfileSystemVoice(profile.id, engine, state.systemSelectedVoice)
-                        Toast.makeText(context, "已把当前系统语音绑定到该音色。", Toast.LENGTH_SHORT).show()
+                        viewModel.bindProfileSystemVoice(profile.id, engine, state.systemSelectedVoice) { ok, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
                     },
                     onClearSystemBinding = { viewModel.clearProfileSystemBinding(profile.id) },
                 )
+            }
+        }
+    }
+
+    cloudBindingPickerFor?.let { profile ->
+        val cloud = state.cloudSetup
+        CyberDialog(
+            onDismissRequest = { cloudBindingPickerFor = null },
+            title = "绑定云端音色",
+            code = "CLOUD VOICE BINDING",
+            modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp).heightIn(max = 680.dp),
+            actions = {
+                CyberOutlinedButton(text = "关闭", onClick = { cloudBindingPickerFor = null })
+            },
+        ) {
+            Text(
+                "将云端音色绑定到「${profile.displayName}」。克隆音色来自历史录音；无法新增克隆时（如套餐限制）可直接绑定已有克隆音色或官方音色。",
+                fontSize = 11.sp,
+                color = colors.textMuted,
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (cloud.clonedVoices.isNotEmpty()) {
+                    Text(
+                        "克隆音色（${cloud.clonedVoices.size}）",
+                        style = CyberType.sectionCode,
+                        color = colors.cyan,
+                    )
+                    cloud.clonedVoices.forEach { voice ->
+                        CyberRadioRow(
+                            selected = profile.minimaxVoiceId == voice.id,
+                            enabled = true,
+                            title = voice.displayName,
+                            onClick = {
+                                viewModel.bindProfileCloudVoice(profile.id, voice.id) { ok, msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                                cloudBindingPickerFor = null
+                            },
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                Text(
+                    "官方音色（${cloud.officialVoices.size}）",
+                    style = CyberType.sectionCode,
+                    color = colors.cyan,
+                )
+                cloud.officialVoices.forEach { voice ->
+                    CyberRadioRow(
+                        selected = profile.minimaxVoiceId == voice.id,
+                        enabled = true,
+                        title = voice.displayName,
+                        onClick = {
+                            viewModel.bindProfileCloudVoice(profile.id, voice.id) { ok, msg ->
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
+                            cloudBindingPickerFor = null
+                        },
+                    )
+                }
             }
         }
     }
@@ -415,6 +491,7 @@ private fun VoiceDossierCard(
     processing: Boolean,
     systemEngines: List<com.shinevoice.provider.androidtts.SystemEngineInfo>,
     cloudCloning: Boolean,
+    cloudVoicesAvailable: Boolean,
     onExpand: () -> Unit,
     onSetCurrent: () -> Unit,
     onRequestRename: () -> Unit,
@@ -424,6 +501,7 @@ private fun VoiceDossierCard(
     onImport: () -> Unit,
     onEditReferenceText: (String) -> Unit,
     onCloneToCloud: () -> Unit,
+    onBindCloudVoice: () -> Unit,
     onBindSystemVoice: () -> Unit,
     onClearSystemBinding: () -> Unit,
 ) {
@@ -558,6 +636,9 @@ private fun VoiceDossierCard(
                         onClick = onCloneToCloud,
                         enabled = !cloudCloning,
                     )
+                }
+                if (cloudVoicesAvailable) {
+                    CyberOutlinedButton(text = "绑定云端音色", onClick = onBindCloudVoice)
                 }
             }
         }

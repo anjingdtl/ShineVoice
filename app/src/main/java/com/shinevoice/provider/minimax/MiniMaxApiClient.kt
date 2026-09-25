@@ -499,7 +499,7 @@ class MiniMaxApiClient(
                 ?: json.optString("message").takeUnless { it.isNullOrBlank() }
                 ?: fallback
             val code = when (statusCode) {
-                1004, 2038 -> TtsErrorCode.ApiUnauthorized
+                1004, 2038, 2061 -> TtsErrorCode.ApiUnauthorized
                 1008 -> TtsErrorCode.ApiInsufficientBalance
                 1002, 1039 -> TtsErrorCode.ApiRateLimited
                 1001 -> TtsErrorCode.GenerationTimeout
@@ -510,6 +510,7 @@ class MiniMaxApiClient(
             val userMessage = when (statusCode) {
                 1004 -> "API Key 无效或无权限，请检查 Key 与所选服务区域是否匹配。"
                 2038 -> "当前账号没有音色克隆权限，请先在云端控制台完成认证。"
+                2061 -> "当前 API Key 套餐不支持该模型（如音色克隆 voice_clone），请升级套餐或更换 Key。"
                 1008 -> "账号余额不足，请到云端控制台充值后再试。"
                 1002, 1039 -> "云端请求过于频繁，请稍后重试。"
                 1001 -> "云端处理超时，请稍后重试。"

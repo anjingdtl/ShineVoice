@@ -839,7 +839,7 @@ private fun systemVoiceLanguageLabel(languageId: String?, displayName: String): 
 
 /** Terminal radio row: neon square indicator + title/subtitle. */
 @Composable
-private fun CyberRadioRow(
+internal fun CyberRadioRow(
     selected: Boolean,
     enabled: Boolean,
     title: String,
